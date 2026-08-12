@@ -104,11 +104,35 @@ async def websocket_events(websocket: WebSocket) -> None:
     await websocket.send_json({"type": "status", "status": manager.snapshot()})
     try:
         async with broker.subscribe() as queue:
-            while True:
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=20)
-                except TimeoutError:
-                    event = {"type": "ping"}
-                await websocket.send_json(event)
+            sender = asyncio.create_task(_send_websocket_events(websocket, queue))
+            receiver = asyncio.create_task(_wait_for_websocket_disconnect(websocket))
+            done, pending = await asyncio.wait(
+                {sender, receiver},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            for task in done:
+                task.result()
     except (WebSocketDisconnect, RuntimeError):
         pass
+
+
+async def _send_websocket_events(
+    websocket: WebSocket,
+    queue: asyncio.Queue[dict[str, object]],
+) -> None:
+    while True:
+        try:
+            event = await asyncio.wait_for(queue.get(), timeout=20)
+        except TimeoutError:
+            event = {"type": "ping"}
+        await websocket.send_json(event)
+
+
+async def _wait_for_websocket_disconnect(websocket: WebSocket) -> None:
+    while True:
+        message = await websocket.receive()
+        if message["type"] == "websocket.disconnect":
+            return

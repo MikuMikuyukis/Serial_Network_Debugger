@@ -20,7 +20,7 @@ function showToast(message: string, error = true): void {
   }, 3_500);
 }
 
-const { status, logs, paused, applyStatus, clearLogs } = useCommunication(showToast);
+const { status, logs, paused, eventsConnected, applyStatus, clearLogs } = useCommunication(showToast);
 
 const modeNames: Record<TransportMode, string> = {
   serial: "串口",
@@ -82,6 +82,7 @@ onMounted(async () => {
       <TrafficConsole
         v-model:paused="paused"
         :connected="status.connected"
+        :events-connected="eventsConnected"
         :logs="logs"
         @clear="clearLogs"
         @error="showToast"

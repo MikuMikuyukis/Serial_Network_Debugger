@@ -24,6 +24,7 @@ export function useCommunication(onError: (message: string) => void) {
   const status = ref<TransportStatus>({ ...EMPTY_STATUS });
   const logs = shallowRef<LogItem[]>([]);
   const paused = ref(false);
+  const eventsConnected = ref(false);
   const pending: LogItem[] = [];
   let nextLogId = 1;
   let socket: WebSocket | null = null;
@@ -83,6 +84,10 @@ export function useCommunication(onError: (message: string) => void) {
     const nextSocket = new WebSocket(`${scheme}://${window.location.host}/ws/events`);
     socket = nextSocket;
 
+    nextSocket.addEventListener("open", () => {
+      eventsConnected.value = true;
+    });
+
     nextSocket.addEventListener("message", (message) => {
       try {
         queueEvent(JSON.parse(message.data as string) as ServerEvent);
@@ -91,8 +96,12 @@ export function useCommunication(onError: (message: string) => void) {
       }
     });
     nextSocket.addEventListener("close", () => {
+      eventsConnected.value = false;
       if (stopped || socket !== nextSocket) return;
       reconnectTimer = window.setTimeout(connectEvents, 1_500);
+    });
+    nextSocket.addEventListener("error", () => {
+      eventsConnected.value = false;
     });
   }
 
@@ -112,6 +121,7 @@ export function useCommunication(onError: (message: string) => void) {
     status,
     logs,
     paused,
+    eventsConnected,
     applyStatus,
     clearLogs,
   };

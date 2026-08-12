@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { Eraser, Pause, Play, Send } from "@lucide/vue";
 import { apiRequest } from "../api";
 import type { DataFormat, LineEnding, LogItem, SendPayload, TextEncoding } from "../types";
@@ -7,6 +7,7 @@ import VirtualLog from "./VirtualLog.vue";
 
 const props = defineProps<{
   connected: boolean;
+  eventsConnected: boolean;
   logs: LogItem[];
   paused: boolean;
 }>();
@@ -27,6 +28,10 @@ const sending = ref(false);
 const placeholder = computed(() =>
   format.value === "hex" ? "AA 55 01 00" : "输入发送内容",
 );
+
+watch(format, (value) => {
+  if (value === "hex") displayHex.value = true;
+});
 
 async function send(): Promise<void> {
   sending.value = true;
@@ -61,6 +66,10 @@ function handleSendShortcut(event: KeyboardEvent): void {
       <div>
         <span class="eyebrow">LIVE TRAFFIC</span>
         <h2>通信日志</h2>
+        <span class="event-channel" :class="{ online: eventsConnected }">
+          <span class="event-channel-dot"></span>
+          {{ eventsConnected ? "实时通道已连接" : "实时通道正在重连" }}
+        </span>
       </div>
       <div class="toolbar-actions">
         <label class="toggle">
