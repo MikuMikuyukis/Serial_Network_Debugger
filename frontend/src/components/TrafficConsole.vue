@@ -7,7 +7,6 @@ import VirtualLog from "./VirtualLog.vue";
 
 const props = defineProps<{
   connected: boolean;
-  eventsConnected: boolean;
   logs: LogItem[];
   paused: boolean;
 }>();
@@ -66,10 +65,6 @@ function handleSendShortcut(event: KeyboardEvent): void {
       <div>
         <span class="eyebrow">LIVE TRAFFIC</span>
         <h2>通信日志</h2>
-        <span class="event-channel" :class="{ online: eventsConnected }">
-          <span class="event-channel-dot"></span>
-          {{ eventsConnected ? "实时通道已连接" : "实时通道正在重连" }}
-        </span>
       </div>
       <div class="toolbar-actions">
         <label class="toggle">

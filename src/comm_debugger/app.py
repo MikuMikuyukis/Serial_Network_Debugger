@@ -114,7 +114,8 @@ async def websocket_events(websocket: WebSocket) -> None:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
             for task in done:
-                task.result()
+                if not task.cancelled():
+                    task.result()
     except (WebSocketDisconnect, RuntimeError):
         pass
 

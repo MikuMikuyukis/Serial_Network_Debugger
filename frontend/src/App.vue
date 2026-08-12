@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { Cable } from "@lucide/vue";
+import { onMounted, ref } from "vue";
+import { Cable, Moon, Sun } from "@lucide/vue";
 import { apiRequest } from "./api";
-import ConnectionPanel from "./components/ConnectionPanel.vue";
+import ConnectionBar from "./components/ConnectionBar.vue";
 import ToastStack, { type ToastMessage } from "./components/ToastStack.vue";
 import TrafficConsole from "./components/TrafficConsole.vue";
 import { useCommunication } from "./composables/useCommunication";
-import type { TransportMode, TransportStatus } from "./types";
+import { loadTheme, saveTheme, type Theme } from "./storage";
+import type { TransportStatus } from "./types";
 
 const toasts = ref<ToastMessage[]>([]);
+const theme = ref<Theme>(loadTheme());
 let nextToastId = 1;
 
 function showToast(message: string, error = true): void {
@@ -22,32 +24,10 @@ function showToast(message: string, error = true): void {
 
 const { status, logs, paused, eventsConnected, applyStatus, clearLogs } = useCommunication(showToast);
 
-const modeNames: Record<TransportMode, string> = {
-  serial: "串口",
-  tcp_client: "TCP Client",
-  tcp_server: "TCP Server",
-  udp: "UDP",
-};
-
-const statusText = computed(() => {
-  if (!status.value.connected || !status.value.mode) return "未连接";
-  return `${modeNames[status.value.mode]} 已连接`;
-});
-
-const statusDetail = computed(() => {
-  const details = status.value.details;
-  if (!status.value.connected) return "配置通信参数后建立连接";
-  if (status.value.mode === "serial") return `${String(details.port)} · ${String(details.baudrate)} baud`;
-  if (status.value.mode === "tcp_client") return `${String(details.host)}:${String(details.port)}`;
-  if (status.value.mode === "tcp_server") {
-    return `${String(details.host)}:${String(details.port)} · ${Number(details.client_count ?? 0)} 个客户端`;
-  }
-  if (status.value.mode === "udp") {
-    const remote = details.remote ? ` → ${String(details.remote)}` : "";
-    return `${String(details.local_host)}:${String(details.local_port)}${remote}`;
-  }
-  return "通信已连接";
-});
+function toggleTheme(): void {
+  theme.value = theme.value === "light" ? "dark" : "light";
+  saveTheme(theme.value);
+}
 
 onMounted(async () => {
   try {
@@ -65,24 +45,30 @@ onMounted(async () => {
         <span class="brand-mark" aria-hidden="true"><Cable :size="21" /></span>
         <div class="brand-copy">
           <h1>Serial Network Debugger</h1>
-          <p>串口与网络调试工具</p>
         </div>
       </div>
-      <div class="connection-state" aria-live="polite">
-        <span class="status-dot" :class="{ connected: status.connected }"></span>
-        <div>
-          <strong>{{ statusText }}</strong>
-          <span>{{ statusDetail }}</span>
-        </div>
-      </div>
+      <ConnectionBar
+        :status="status"
+        :events-connected="eventsConnected"
+        @status="applyStatus"
+        @error="showToast"
+      />
+      <button
+        class="theme-button"
+        type="button"
+        :title="theme === 'light' ? '切换到深色模式' : '切换到浅色模式'"
+        :aria-label="theme === 'light' ? '切换到深色模式' : '切换到浅色模式'"
+        @click="toggleTheme"
+      >
+        <Moon v-if="theme === 'light'" :size="18" />
+        <Sun v-else :size="18" />
+      </button>
     </header>
 
     <main class="workspace">
-      <ConnectionPanel :status="status" @status="applyStatus" @error="showToast" />
       <TrafficConsole
         v-model:paused="paused"
         :connected="status.connected"
-        :events-connected="eventsConnected"
         :logs="logs"
         @clear="clearLogs"
         @error="showToast"
