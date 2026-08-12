@@ -5,7 +5,7 @@ export default defineConfig({
   base: "/static/",
   plugins: [vue()],
   build: {
-    outDir: "../src/comm_debugger/static",
+    outDir: "../server/public",
     emptyOutDir: true,
     assetsDir: ".",
   },

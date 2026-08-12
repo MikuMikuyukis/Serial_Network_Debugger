@@ -1,0 +1,26 @@
+{
+  "name": "serial-network-debugger",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "frontend",
+    "server"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace frontend && npm run build --workspace server",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "dev:server": "tsx server/src/cli.ts",
+    "start": "node server/dist/cli.js",
+    "test": "npm run test --workspace server",
+    "typecheck": "npm run typecheck --workspace frontend && npm run typecheck --workspace server"
+  },
+  "engines": {
+    "node": ">=24.12 <25"
+  },
+  "allowScripts": {
+    "@serialport/bindings-cpp@13.0.0": true,
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.3": true
+  }
+}
