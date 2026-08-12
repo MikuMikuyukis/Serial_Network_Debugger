@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { LogItem } from "../types";
 
 const ROW_HEIGHT = 29;
@@ -14,6 +14,7 @@ const props = defineProps<{
 const viewport = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);
 const viewportHeight = ref(400);
+let resizeObserver: ResizeObserver | null = null;
 const startIndex = computed(() => Math.max(0, Math.floor(scrollTop.value / ROW_HEIGHT) - OVERSCAN));
 const visibleCount = computed(() => Math.ceil(viewportHeight.value / ROW_HEIGHT) + OVERSCAN * 2);
 const visibleLogs = computed(() => props.logs.slice(startIndex.value, startIndex.value + visibleCount.value));
@@ -35,8 +36,10 @@ async function scrollToBottom(): Promise<void> {
 watch(() => props.logs.length, scrollToBottom);
 onMounted(() => {
   onScroll();
-  new ResizeObserver(onScroll).observe(viewport.value!);
+  resizeObserver = new ResizeObserver(onScroll);
+  resizeObserver.observe(viewport.value!);
 });
+onBeforeUnmount(() => resizeObserver?.disconnect());
 </script>
 
 <template>

@@ -10,6 +10,7 @@ export interface SerialConfig {
   bytesize: 5 | 6 | 7 | 8;
   parity: "N" | "E" | "O" | "M" | "S";
   stopbits: 1 | 1.5 | 2;
+  receive_idle_ms: number;
 }
 
 export interface TcpClientConfig {

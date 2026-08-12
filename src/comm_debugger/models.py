@@ -12,6 +12,7 @@ class SerialConfig(BaseModel):
     bytesize: Literal[5, 6, 7, 8] = 8
     parity: Literal["N", "E", "O", "M", "S"] = "N"
     stopbits: Literal[1, 1.5, 2] = 1
+    receive_idle_ms: int = Field(default=20, ge=1, le=1000)
 
 
 class TcpClientConfig(BaseModel):

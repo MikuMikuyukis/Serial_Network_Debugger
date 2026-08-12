@@ -17,6 +17,11 @@ def test_transport_config_uses_mode_discriminator() -> None:
     assert config.port == 9000
 
 
+def test_serial_receive_idle_interval_defaults_to_20_ms() -> None:
+    config = transport_adapter.validate_python({"mode": "serial", "port": "COM3"})
+    assert config.receive_idle_ms == 20
+
+
 def test_udp_remote_must_be_complete_pair() -> None:
     with pytest.raises(ValidationError):
         UdpConfig(

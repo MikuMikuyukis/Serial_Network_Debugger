@@ -41,6 +41,7 @@ const serial = reactive<SerialConfig>({
   bytesize: 8,
   parity: "N",
   stopbits: 1,
+  receive_idle_ms: 20,
 });
 const tcpClient = reactive<TcpClientConfig>({
   mode: "tcp_client",
@@ -220,6 +221,11 @@ onMounted(refreshPorts);
               </select>
             </label>
           </div>
+          <label class="field">
+            <span>接收合并间隔 (ms)</span>
+            <input v-model.number="serial.receive_idle_ms" :disabled="connected" type="number" min="1" max="1000" required />
+          </label>
+          <p class="field-note">线路持续空闲达到该时间后，显示为一条 RX 记录。</p>
         </div>
 
         <div v-else-if="mode === 'tcp_client'" class="mode-panel">
