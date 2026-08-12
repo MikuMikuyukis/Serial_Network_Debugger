@@ -39,7 +39,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.get("/", async (_request, reply) => reply.sendFile("index.html"));
   app.get("/favicon.ico", async (_request, reply) => reply.status(204).send());
 
-  app.get("/api/health", async () => ({ status: "ok", version: "0.3.0" }));
+  app.get("/api/health", async () => ({ status: "ok", version: "0.3.1" }));
   app.get("/api/status", async () => manager.snapshot());
   app.get("/api/periodic-send", async () => periodicSender.snapshot());
 

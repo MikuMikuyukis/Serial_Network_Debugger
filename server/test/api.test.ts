@@ -20,7 +20,7 @@ describe("HTTP and WebSocket API", () => {
     const app = await makeApp();
     const health = await app.inject({ method: "GET", url: "/api/health" });
     expect(health.statusCode).toBe(200);
-    expect(health.json()).toMatchObject({ status: "ok", version: "0.3.0" });
+    expect(health.json()).toMatchObject({ status: "ok", version: "0.3.1" });
     const frontend = await app.inject({ method: "GET", url: "/" });
     expect(frontend.statusCode).toBe(200);
     expect(frontend.body).toContain("Serial Network Debugger");

@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { BookmarkPlus, Eraser, PanelRight, Pause, Play, Repeat, Send, Square } from "@lucide/vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { Eraser, PanelRight, Pause, Play, Repeat, Send, Square } from "@lucide/vue";
 import { apiRequest } from "../api";
-import { loadSendPresets, MAX_SEND_PRESETS, saveSendPresets } from "../storage";
+import {
+  loadSendEditor,
+  loadSendPresets,
+  MAX_SEND_PRESETS,
+  saveSendEditor,
+  saveSendPresets,
+} from "../storage";
 import type {
   DataFormat,
   LineEnding,
@@ -33,17 +39,21 @@ const emit = defineEmits<{
 
 const displayHex = ref(false);
 const autoScroll = ref(true);
-const format = ref<DataFormat>("text");
-const textEncoding = ref<TextEncoding>("utf-8");
-const lineEnding = ref<LineEnding>("none");
-const sendData = ref("");
-const intervalMs = ref(1000);
+const storedEditor = loadSendEditor();
+const format = ref<DataFormat>(storedEditor.format);
+const textEncoding = ref<TextEncoding>(storedEditor.text_encoding);
+const lineEnding = ref<LineEnding>(storedEditor.line_ending);
+const sendData = ref(storedEditor.data);
+const intervalMs = ref(storedEditor.interval_ms);
 const sending = ref(false);
 const changingPeriodic = ref(false);
 const presets = ref<SendPreset[]>(loadSendPresets());
-const presetsOpen = ref(window.matchMedia("(min-width: 761px)").matches);
-const presetPanel = ref<InstanceType<typeof SendPresetPanel> | null>(null);
+const presetsOpen = ref(true);
 const sendingPresetId = ref<string | null>(null);
+const sequenceRunning = ref(false);
+let sequenceGeneration = 0;
+let editorSaveTimer: number | undefined;
+let presetSaveTimer: number | undefined;
 const placeholder = computed(() => format.value === "hex" ? "AA 55 01 00" : "输入发送内容");
 const editorPayload = computed<SendPayload>(() => ({
   data: sendData.value,
@@ -55,8 +65,17 @@ const editorPayload = computed<SendPayload>(() => ({
 watch(format, (value) => {
   if (value === "hex") displayHex.value = true;
 });
+watch([sendData, format, textEncoding, lineEnding, intervalMs], scheduleEditorSave);
 watch(() => props.periodicStatus.interval_ms, (value) => {
   if (value !== null) intervalMs.value = value;
+});
+onMounted(() => window.addEventListener("beforeunload", persistPendingState));
+onBeforeUnmount(() => {
+  sequenceGeneration += 1;
+  window.removeEventListener("beforeunload", persistPendingState);
+  persistPendingState();
+  if (editorSaveTimer !== undefined) window.clearTimeout(editorSaveTimer);
+  if (presetSaveTimer !== undefined) window.clearTimeout(presetSaveTimer);
 });
 
 async function sendPayload(payload: SendPayload): Promise<void> {
@@ -127,35 +146,118 @@ async function sendPreset(preset: SendPreset): Promise<void> {
   }
 }
 
-function savePreset(id: string | null, draft: SendPresetDraft): void {
-  const now = new Date().toISOString();
-  let nextPresets = [...presets.value];
-  if (id) {
-    const index = nextPresets.findIndex((preset) => preset.id === id);
-    if (index >= 0) nextPresets.splice(index, 1, { ...draft, id, updated_at: now });
-  } else {
-    if (presets.value.length >= MAX_SEND_PRESETS) {
-      emit("error", `发送预设最多保存 ${MAX_SEND_PRESETS} 条`);
-      return;
-    }
-    nextPresets = [{ ...draft, id: createPresetId(), updated_at: now }, ...nextPresets];
+function addPreset(): void {
+  if (presets.value.length >= MAX_SEND_PRESETS) {
+    emit("error", `发送预设最多保存 ${MAX_SEND_PRESETS} 条`);
+    return;
   }
+  const now = new Date().toISOString();
+  presets.value.push({
+    id: createPresetId(),
+    name: "",
+    data: "",
+    format: "text",
+    text_encoding: "utf-8",
+    line_ending: "none",
+    enabled: true,
+    delay_ms: 50,
+    updated_at: now,
+  });
+  schedulePresetSave();
+}
+
+function updatePreset(id: string, changes: Partial<SendPresetDraft>): void {
+  const now = new Date().toISOString();
+  const index = presets.value.findIndex((preset) => preset.id === id);
+  if (index < 0) return;
+  const preset = presets.value[index]!;
+  presets.value.splice(index, 1, { ...preset, ...changes, updated_at: now });
+  schedulePresetSave();
+}
+
+function removePreset(preset: SendPreset): void {
+  presets.value = presets.value.filter((item) => item.id !== preset.id);
+  schedulePresetSave();
+}
+
+async function toggleSequence(): Promise<void> {
+  if (sequenceRunning.value) {
+    sequenceGeneration += 1;
+    sequenceRunning.value = false;
+    sendingPresetId.value = null;
+    return;
+  }
+  const queue = presets.value.filter((preset) => preset.enabled && preset.data.length > 0);
+  if (!props.connected || queue.length === 0) return;
+  const generation = ++sequenceGeneration;
+  sequenceRunning.value = true;
   try {
-    saveSendPresets(nextPresets);
-    presets.value = nextPresets;
+    for (const [index, preset] of queue.entries()) {
+      if (generation !== sequenceGeneration) break;
+      sendingPresetId.value = preset.id;
+      await sendPayload(preset);
+      if (generation !== sequenceGeneration) break;
+      if (index < queue.length - 1 && preset.delay_ms > 0) {
+        await sequenceDelay(preset.delay_ms, generation);
+      }
+    }
+  } catch (error) {
+    emitError(error, "预设队列发送失败");
+  } finally {
+    if (generation === sequenceGeneration) {
+      sequenceRunning.value = false;
+      sendingPresetId.value = null;
+    }
+  }
+}
+
+function sequenceDelay(delayMs: number, generation: number): Promise<void> {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const poll = (): void => {
+      if (generation !== sequenceGeneration || Date.now() - startedAt >= delayMs) {
+        resolve();
+        return;
+      }
+      window.setTimeout(poll, Math.min(50, delayMs));
+    };
+    poll();
+  });
+}
+
+function scheduleEditorSave(): void {
+  if (editorSaveTimer !== undefined) window.clearTimeout(editorSaveTimer);
+  editorSaveTimer = window.setTimeout(persistEditor, 180);
+}
+
+function persistEditor(): void {
+  try {
+    saveSendEditor({
+      version: 1,
+      ...editorPayload.value,
+      interval_ms: intervalMs.value,
+    });
+  } catch {
+    emit("error", "发送区内容保存失败，请检查浏览器本地存储空间");
+  }
+}
+
+function schedulePresetSave(): void {
+  if (presetSaveTimer !== undefined) window.clearTimeout(presetSaveTimer);
+  presetSaveTimer = window.setTimeout(persistPresets, 180);
+}
+
+function persistPresets(): void {
+  try {
+    saveSendPresets(presets.value);
   } catch {
     emit("error", "发送预设保存失败，请检查浏览器本地存储空间");
   }
 }
 
-function removePreset(preset: SendPreset): void {
-  const nextPresets = presets.value.filter((item) => item.id !== preset.id);
-  try {
-    saveSendPresets(nextPresets);
-    presets.value = nextPresets;
-  } catch {
-    emit("error", "发送预设删除失败，请检查浏览器本地存储状态");
-  }
+function persistPendingState(): void {
+  persistEditor();
+  persistPresets();
 }
 
 function createPresetId(): string {
@@ -214,18 +316,19 @@ function emitError(error: unknown, fallback: string): void {
     <div class="traffic-workspace" :class="{ 'presets-open': presetsOpen }">
       <VirtualLog :logs="logs" :display-hex="displayHex" :auto-scroll="autoScroll" />
       <SendPresetPanel
-        ref="presetPanel"
         :presets="presets"
         :connected="connected"
         :open="presetsOpen"
-        :editor-payload="editorPayload"
         :editor-locked="periodicStatus.active"
         :sending-preset-id="sendingPresetId"
+        :sequence-running="sequenceRunning"
         @close="presetsOpen = false"
-        @save="savePreset"
+        @add="addPreset"
+        @update="updatePreset"
         @remove="removePreset"
         @load="loadPreset"
         @send="sendPreset"
+        @toggle-sequence="toggleSequence"
       />
     </div>
 
@@ -252,9 +355,6 @@ function emitError(error: unknown, fallback: string): void {
             <option value="cr">CR</option>
           </select>
         </label>
-        <button class="icon-tool-button" type="button" title="将当前内容保存为预设" aria-label="将当前内容保存为预设" @click="presetPanel?.openCreate()">
-          <BookmarkPlus :size="16" />
-        </button>
         <div class="periodic-controls" :class="{ active: periodicStatus.active }">
           <Repeat :size="15" />
           <label>
@@ -280,6 +380,7 @@ function emitError(error: unknown, fallback: string): void {
         <textarea
           v-model="sendData"
           rows="3"
+          maxlength="1048576"
           :placeholder="placeholder"
           :disabled="periodicStatus.active"
           @keydown="handleSendShortcut"

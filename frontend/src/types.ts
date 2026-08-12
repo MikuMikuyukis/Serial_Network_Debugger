@@ -73,10 +73,17 @@ export interface PeriodicSendStatus {
 export interface SendPreset extends SendPayload {
   id: string;
   name: string;
+  enabled: boolean;
+  delay_ms: number;
   updated_at: string;
 }
 
 export type SendPresetDraft = Omit<SendPreset, "id" | "updated_at">;
+
+export interface SendEditorDraft extends SendPayload {
+  version: 1;
+  interval_ms: number;
+}
 
 export interface LogItem {
   id: number;
