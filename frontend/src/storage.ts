@@ -1,5 +1,6 @@
 import type {
   SerialConfig,
+  SendPreset,
   TcpClientConfig,
   TcpServerConfig,
   TransportMode,
@@ -19,6 +20,8 @@ export interface TransportSettings {
 
 const SETTINGS_KEY = "snd.transport-settings.v1";
 const THEME_KEY = "snd.theme";
+const SEND_PRESETS_KEY = "snd.send-presets.v1";
+export const MAX_SEND_PRESETS = 100;
 
 export const DEFAULT_TRANSPORT_SETTINGS: TransportSettings = {
   version: 1,
@@ -103,6 +106,36 @@ export function saveTheme(theme: Theme): void {
   applyTheme(theme);
 }
 
+export function loadSendPresets(): SendPreset[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SEND_PRESETS_KEY) ?? "[]") as unknown;
+    if (!Array.isArray(stored)) return [];
+    return stored.filter(isSendPreset).slice(0, MAX_SEND_PRESETS);
+  } catch {
+    return [];
+  }
+}
+
+export function saveSendPresets(presets: SendPreset[]): void {
+  localStorage.setItem(SEND_PRESETS_KEY, JSON.stringify(presets.slice(0, MAX_SEND_PRESETS)));
+}
+
 function isTransportMode(value: unknown): value is TransportMode {
   return value === "serial" || value === "tcp_client" || value === "tcp_server" || value === "udp";
+}
+
+function isSendPreset(value: unknown): value is SendPreset {
+  if (!value || typeof value !== "object") return false;
+  const preset = value as Partial<SendPreset>;
+  return typeof preset.id === "string"
+    && preset.id.length > 0
+    && typeof preset.name === "string"
+    && preset.name.length > 0
+    && preset.name.length <= 60
+    && typeof preset.data === "string"
+    && preset.data.length <= 1_048_576
+    && (preset.format === "text" || preset.format === "hex")
+    && (preset.text_encoding === "utf-8" || preset.text_encoding === "ascii" || preset.text_encoding === "gbk")
+    && (preset.line_ending === "none" || preset.line_ending === "cr" || preset.line_ending === "lf" || preset.line_ending === "crlf")
+    && typeof preset.updated_at === "string";
 }

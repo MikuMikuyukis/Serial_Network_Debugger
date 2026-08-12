@@ -42,10 +42,12 @@ export class TransportManager {
     return this.#exclusive(() => this.#disconnectUnlocked());
   }
 
-  async send(data: Buffer): Promise<void> {
-    const transport = this.#transport;
-    if (!transport) throw new TransportError("请先建立通信连接");
-    await transport.send(data);
+  send(data: Buffer): Promise<void> {
+    return this.#exclusive(async () => {
+      const transport = this.#transport;
+      if (!transport) throw new TransportError("请先建立通信连接");
+      await transport.send(data);
+    });
   }
 
   async #disconnectUnlocked(): Promise<void> {

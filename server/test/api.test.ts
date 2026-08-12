@@ -20,7 +20,7 @@ describe("HTTP and WebSocket API", () => {
     const app = await makeApp();
     const health = await app.inject({ method: "GET", url: "/api/health" });
     expect(health.statusCode).toBe(200);
-    expect(health.json()).toMatchObject({ status: "ok", version: "0.2.0" });
+    expect(health.json()).toMatchObject({ status: "ok", version: "0.3.0" });
     const frontend = await app.inject({ method: "GET", url: "/" });
     expect(frontend.statusCode).toBe(200);
     expect(frontend.body).toContain("Serial Network Debugger");
@@ -100,5 +100,50 @@ describe("HTTP and WebSocket API", () => {
       size: 14,
     });
     socket.close();
+  });
+
+  it("启动、查询和停止周期发送，并在断开时自动停止", async () => {
+    const app = await makeApp();
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const connected = await fetch(`${address}/api/connect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "tcp_server", host: "127.0.0.1", port: 0 }),
+    });
+    const status = await connected.json() as { details: { port: number } };
+    const client = net.createConnection(status.details.port, "127.0.0.1");
+    await new Promise<void>((resolve) => client.once("connect", resolve));
+    let received = "";
+    client.on("data", (data) => { received += data.toString(); });
+
+    const started = await fetch(`${address}/api/periodic-send/start`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        data: "tick",
+        format: "text",
+        text_encoding: "utf-8",
+        line_ending: "none",
+        interval_ms: 20,
+      }),
+    });
+    expect(started.status).toBe(200);
+    expect(await started.json()).toMatchObject({ active: true, sent_count: 1, interval_ms: 20 });
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    expect(received.length).toBeGreaterThanOrEqual(12);
+
+    const periodic = await (await fetch(`${address}/api/periodic-send`)).json() as {
+      active: boolean;
+      sent_count: number;
+    };
+    expect(periodic.active).toBe(true);
+    expect(periodic.sent_count).toBeGreaterThanOrEqual(3);
+
+    await fetch(`${address}/api/disconnect`, { method: "POST" });
+    const stopped = await (await fetch(`${address}/api/periodic-send`)).json() as {
+      active: boolean;
+    };
+    expect(stopped.active).toBe(false);
+    client.destroy();
   });
 });

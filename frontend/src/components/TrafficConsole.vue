@@ -1,20 +1,34 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { Eraser, Pause, Play, Send } from "@lucide/vue";
+import { BookmarkPlus, Eraser, PanelRight, Pause, Play, Repeat, Send, Square } from "@lucide/vue";
 import { apiRequest } from "../api";
-import type { DataFormat, LineEnding, LogItem, SendPayload, TextEncoding } from "../types";
+import { loadSendPresets, MAX_SEND_PRESETS, saveSendPresets } from "../storage";
+import type {
+  DataFormat,
+  LineEnding,
+  LogItem,
+  PeriodicSendRequest,
+  PeriodicSendStatus,
+  SendPayload,
+  SendPreset,
+  SendPresetDraft,
+  TextEncoding,
+} from "../types";
+import SendPresetPanel from "./SendPresetPanel.vue";
 import VirtualLog from "./VirtualLog.vue";
 
 const props = defineProps<{
   connected: boolean;
   logs: LogItem[];
   paused: boolean;
+  periodicStatus: PeriodicSendStatus;
 }>();
 
 const emit = defineEmits<{
   error: [message: string];
   clear: [];
   "update:paused": [paused: boolean];
+  "periodic-status": [status: PeriodicSendStatus];
 }>();
 
 const displayHex = ref(false);
@@ -23,32 +37,69 @@ const format = ref<DataFormat>("text");
 const textEncoding = ref<TextEncoding>("utf-8");
 const lineEnding = ref<LineEnding>("none");
 const sendData = ref("");
+const intervalMs = ref(1000);
 const sending = ref(false);
-const placeholder = computed(() =>
-  format.value === "hex" ? "AA 55 01 00" : "输入发送内容",
-);
+const changingPeriodic = ref(false);
+const presets = ref<SendPreset[]>(loadSendPresets());
+const presetsOpen = ref(window.matchMedia("(min-width: 761px)").matches);
+const presetPanel = ref<InstanceType<typeof SendPresetPanel> | null>(null);
+const sendingPresetId = ref<string | null>(null);
+const placeholder = computed(() => format.value === "hex" ? "AA 55 01 00" : "输入发送内容");
+const editorPayload = computed<SendPayload>(() => ({
+  data: sendData.value,
+  format: format.value,
+  text_encoding: textEncoding.value,
+  line_ending: lineEnding.value,
+}));
 
 watch(format, (value) => {
   if (value === "hex") displayHex.value = true;
 });
+watch(() => props.periodicStatus.interval_ms, (value) => {
+  if (value !== null) intervalMs.value = value;
+});
+
+async function sendPayload(payload: SendPayload): Promise<void> {
+  await apiRequest<{ ok: boolean; message: string }>("/api/send", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
 
 async function send(): Promise<void> {
   sending.value = true;
   try {
-    const payload: SendPayload = {
-      data: sendData.value,
-      format: format.value,
-      text_encoding: textEncoding.value,
-      line_ending: lineEnding.value,
+    await sendPayload(editorPayload.value);
+  } catch (error) {
+    emitError(error, "发送失败");
+  } finally {
+    sending.value = false;
+  }
+}
+
+async function togglePeriodic(): Promise<void> {
+  changingPeriodic.value = true;
+  try {
+    if (props.periodicStatus.active) {
+      const response = await apiRequest<{ status: PeriodicSendStatus }>("/api/periodic-send/stop", {
+        method: "POST",
+      });
+      emit("periodic-status", response.status);
+      return;
+    }
+    const payload: PeriodicSendRequest = {
+      ...editorPayload.value,
+      interval_ms: intervalMs.value,
     };
-    await apiRequest<{ ok: boolean; message: string }>("/api/send", {
+    const status = await apiRequest<PeriodicSendStatus>("/api/periodic-send/start", {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    emit("periodic-status", status);
   } catch (error) {
-    emit("error", error instanceof Error ? error.message : "发送失败");
+    emitError(error, props.periodicStatus.active ? "停止周期发送失败" : "启动周期发送失败");
   } finally {
-    sending.value = false;
+    changingPeriodic.value = false;
   }
 }
 
@@ -56,6 +107,65 @@ function handleSendShortcut(event: KeyboardEvent): void {
   if (event.key !== "Enter" || !event.ctrlKey) return;
   event.preventDefault();
   if (props.connected && !sending.value) void send();
+}
+
+function loadPreset(preset: SendPreset): void {
+  sendData.value = preset.data;
+  format.value = preset.format;
+  textEncoding.value = preset.text_encoding;
+  lineEnding.value = preset.line_ending;
+}
+
+async function sendPreset(preset: SendPreset): Promise<void> {
+  sendingPresetId.value = preset.id;
+  try {
+    await sendPayload(preset);
+  } catch (error) {
+    emitError(error, "预设发送失败");
+  } finally {
+    sendingPresetId.value = null;
+  }
+}
+
+function savePreset(id: string | null, draft: SendPresetDraft): void {
+  const now = new Date().toISOString();
+  let nextPresets = [...presets.value];
+  if (id) {
+    const index = nextPresets.findIndex((preset) => preset.id === id);
+    if (index >= 0) nextPresets.splice(index, 1, { ...draft, id, updated_at: now });
+  } else {
+    if (presets.value.length >= MAX_SEND_PRESETS) {
+      emit("error", `发送预设最多保存 ${MAX_SEND_PRESETS} 条`);
+      return;
+    }
+    nextPresets = [{ ...draft, id: createPresetId(), updated_at: now }, ...nextPresets];
+  }
+  try {
+    saveSendPresets(nextPresets);
+    presets.value = nextPresets;
+  } catch {
+    emit("error", "发送预设保存失败，请检查浏览器本地存储空间");
+  }
+}
+
+function removePreset(preset: SendPreset): void {
+  const nextPresets = presets.value.filter((item) => item.id !== preset.id);
+  try {
+    saveSendPresets(nextPresets);
+    presets.value = nextPresets;
+  } catch {
+    emit("error", "发送预设删除失败，请检查浏览器本地存储状态");
+  }
+}
+
+function createPresetId(): string {
+  return typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function emitError(error: unknown, fallback: string): void {
+  emit("error", error instanceof Error ? error.message : fallback);
 }
 </script>
 
@@ -77,6 +187,16 @@ function handleSendShortcut(event: KeyboardEvent): void {
         </label>
         <button
           class="icon-tool-button"
+          :class="{ active: presetsOpen }"
+          type="button"
+          :title="presetsOpen ? '关闭发送预设' : '打开发送预设'"
+          :aria-label="presetsOpen ? '关闭发送预设' : '打开发送预设'"
+          @click="presetsOpen = !presetsOpen"
+        >
+          <PanelRight :size="16" />
+        </button>
+        <button
+          class="icon-tool-button"
           type="button"
           :title="paused ? '继续显示' : '暂停显示'"
           :aria-label="paused ? '继续显示' : '暂停显示'"
@@ -91,17 +211,33 @@ function handleSendShortcut(event: KeyboardEvent): void {
       </div>
     </div>
 
-    <VirtualLog :logs="logs" :display-hex="displayHex" :auto-scroll="autoScroll" />
+    <div class="traffic-workspace" :class="{ 'presets-open': presetsOpen }">
+      <VirtualLog :logs="logs" :display-hex="displayHex" :auto-scroll="autoScroll" />
+      <SendPresetPanel
+        ref="presetPanel"
+        :presets="presets"
+        :connected="connected"
+        :open="presetsOpen"
+        :editor-payload="editorPayload"
+        :editor-locked="periodicStatus.active"
+        :sending-preset-id="sendingPresetId"
+        @close="presetsOpen = false"
+        @save="savePreset"
+        @remove="removePreset"
+        @load="loadPreset"
+        @send="sendPreset"
+      />
+    </div>
 
     <form class="send-panel" @submit.prevent="send">
       <div class="send-options">
         <div class="segmented" aria-label="发送格式">
-          <label><input v-model="format" type="radio" value="text" /><span>文本</span></label>
-          <label><input v-model="format" type="radio" value="hex" /><span>HEX</span></label>
+          <label><input v-model="format" type="radio" value="text" :disabled="periodicStatus.active" /><span>文本</span></label>
+          <label><input v-model="format" type="radio" value="hex" :disabled="periodicStatus.active" /><span>HEX</span></label>
         </div>
         <label class="compact-field">
           <span>编码</span>
-          <select v-model="textEncoding" :disabled="format === 'hex'">
+          <select v-model="textEncoding" :disabled="format === 'hex' || periodicStatus.active">
             <option value="utf-8">UTF-8</option>
             <option value="ascii">ASCII</option>
             <option value="gbk">GBK</option>
@@ -109,17 +245,46 @@ function handleSendShortcut(event: KeyboardEvent): void {
         </label>
         <label class="compact-field">
           <span>行尾</span>
-          <select v-model="lineEnding">
+          <select v-model="lineEnding" :disabled="periodicStatus.active">
             <option value="none">无</option>
             <option value="crlf">CRLF</option>
             <option value="lf">LF</option>
             <option value="cr">CR</option>
           </select>
         </label>
+        <button class="icon-tool-button" type="button" title="将当前内容保存为预设" aria-label="将当前内容保存为预设" @click="presetPanel?.openCreate()">
+          <BookmarkPlus :size="16" />
+        </button>
+        <div class="periodic-controls" :class="{ active: periodicStatus.active }">
+          <Repeat :size="15" />
+          <label>
+            <span>周期</span>
+            <input v-model.number="intervalMs" type="number" min="10" max="86400000" step="10" :disabled="periodicStatus.active" />
+            <span>ms</span>
+          </label>
+          <span v-if="periodicStatus.active" class="periodic-count">已发送 {{ periodicStatus.sent_count }} 次</span>
+          <button
+            class="periodic-button"
+            :class="{ stop: periodicStatus.active }"
+            type="button"
+            :disabled="changingPeriodic || (!periodicStatus.active && (!connected || !sendData.length || intervalMs < 10 || intervalMs > 86400000))"
+            @click="togglePeriodic"
+          >
+            <Square v-if="periodicStatus.active" :size="13" />
+            <Play v-else :size="14" />
+            <span>{{ periodicStatus.active ? "停止" : "启动" }}</span>
+          </button>
+        </div>
       </div>
       <div class="send-row">
-        <textarea v-model="sendData" rows="3" :placeholder="placeholder" @keydown="handleSendShortcut"></textarea>
-        <button class="button button-send" type="submit" :disabled="sending || !connected">
+        <textarea
+          v-model="sendData"
+          rows="3"
+          :placeholder="placeholder"
+          :disabled="periodicStatus.active"
+          @keydown="handleSendShortcut"
+        ></textarea>
+        <button class="button button-send" type="submit" :disabled="sending || !connected || !sendData.length">
           <Send :size="17" />
           <span>发送</span>
         </button>

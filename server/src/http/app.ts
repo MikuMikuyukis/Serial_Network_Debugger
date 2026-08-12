@@ -7,7 +7,12 @@ import { SerialPort } from "serialport";
 import { ZodError } from "zod";
 import { encodePayload } from "../core/codec.js";
 import { EventBroker } from "../core/event-broker.js";
-import { sendRequestSchema, transportConfigSchema } from "../core/schemas.js";
+import { PeriodicSender } from "../core/periodic-sender.js";
+import {
+  periodicSendRequestSchema,
+  sendRequestSchema,
+  transportConfigSchema,
+} from "../core/schemas.js";
 import { TransportError } from "../core/transport.js";
 import { TransportManager } from "../core/transport-manager.js";
 
@@ -20,6 +25,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   const app = Fastify({ logger: options.logger ?? false });
   const broker = new EventBroker();
   const manager = new TransportManager(broker);
+  const periodicSender = new PeriodicSender(manager, broker);
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const publicDir = options.publicDir ?? resolve(moduleDir, "../../public");
 
@@ -31,9 +37,11 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   });
 
   app.get("/", async (_request, reply) => reply.sendFile("index.html"));
+  app.get("/favicon.ico", async (_request, reply) => reply.status(204).send());
 
-  app.get("/api/health", async () => ({ status: "ok", version: "0.2.0" }));
+  app.get("/api/health", async () => ({ status: "ok", version: "0.3.0" }));
   app.get("/api/status", async () => manager.snapshot());
+  app.get("/api/periodic-send", async () => periodicSender.snapshot());
 
   app.get("/api/serial/ports", async () => {
     const ports = await SerialPort.list();
@@ -52,6 +60,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
 
   app.post("/api/connect", async (request, reply) => {
     try {
+      periodicSender.stop();
       const config = transportConfigSchema.parse(request.body);
       return await manager.connect(config);
     } catch (error) {
@@ -60,6 +69,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   });
 
   app.post("/api/disconnect", async () => {
+    periodicSender.stop();
     await manager.disconnect();
     return { ok: true, message: "通信连接已关闭" };
   });
@@ -76,8 +86,26 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     }
   });
 
+  app.post("/api/periodic-send/start", async (request, reply) => {
+    try {
+      const body = periodicSendRequestSchema.parse(request.body);
+      const payload = encodePayload(body.data, body.format, body.text_encoding, body.line_ending);
+      if (payload.length === 0) throw new Error("周期发送内容不能为空");
+      return await periodicSender.start(payload, body.interval_ms);
+    } catch (error) {
+      return sendRequestError(reply, error, broker);
+    }
+  });
+
+  app.post("/api/periodic-send/stop", async () => ({
+    ok: true,
+    message: "周期发送已停止",
+    status: periodicSender.stop(),
+  }));
+
   app.get("/ws/events", { websocket: true }, (socket) => {
     socket.send(JSON.stringify({ type: "status", status: manager.snapshot() }));
+    socket.send(JSON.stringify({ type: "periodic_status", status: periodicSender.snapshot() }));
     const unsubscribe = broker.subscribe((event) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(event));
     });
@@ -92,7 +120,10 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     });
   });
 
-  app.addHook("onClose", async () => manager.disconnect());
+  app.addHook("onClose", async () => {
+    periodicSender.stop();
+    await manager.disconnect();
+  });
   return app;
 }
 

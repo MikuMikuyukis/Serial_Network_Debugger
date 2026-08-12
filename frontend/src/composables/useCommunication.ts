@@ -1,5 +1,5 @@
 import { onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
-import type { LogItem, ServerEvent, TransportStatus } from "../types";
+import type { LogItem, PeriodicSendStatus, ServerEvent, TransportStatus } from "../types";
 
 const MAX_LOGS = 5_000;
 const FLUSH_INTERVAL_MS = 50;
@@ -12,6 +12,14 @@ const EMPTY_STATUS: TransportStatus = {
   details: {},
 };
 
+const EMPTY_PERIODIC_STATUS: PeriodicSendStatus = {
+  active: false,
+  interval_ms: null,
+  sent_count: 0,
+  started_at: null,
+  last_sent_at: null,
+};
+
 function eventTime(timestamp?: string): string {
   if (!timestamp) return new Date().toLocaleTimeString("zh-CN", { hour12: false });
   const date = new Date(timestamp);
@@ -22,6 +30,7 @@ function eventTime(timestamp?: string): string {
 
 export function useCommunication(onError: (message: string) => void) {
   const status = ref<TransportStatus>({ ...EMPTY_STATUS });
+  const periodicStatus = ref<PeriodicSendStatus>({ ...EMPTY_PERIODIC_STATUS });
   const logs = shallowRef<LogItem[]>([]);
   const paused = ref(false);
   const eventsConnected = ref(false);
@@ -36,9 +45,17 @@ export function useCommunication(onError: (message: string) => void) {
     status.value = nextStatus;
   }
 
+  function applyPeriodicStatus(nextStatus: PeriodicSendStatus): void {
+    periodicStatus.value = nextStatus;
+  }
+
   function queueEvent(event: ServerEvent): void {
     if (event.type === "status") {
       applyStatus(event.status);
+      return;
+    }
+    if (event.type === "periodic_status") {
+      applyPeriodicStatus(event.status);
       return;
     }
     if (event.type === "ping" || paused.value) return;
@@ -119,10 +136,12 @@ export function useCommunication(onError: (message: string) => void) {
 
   return {
     status,
+    periodicStatus,
     logs,
     paused,
     eventsConnected,
     applyStatus,
+    applyPeriodicStatus,
     clearLogs,
   };
 }

@@ -47,8 +47,12 @@ export const transportConfigSchema = z.discriminatedUnion("mode", [
 ]);
 
 export const sendRequestSchema = z.object({
-  data: z.string(),
+  data: z.string().max(1_048_576),
   format: z.enum(["text", "hex"]).default("text"),
   text_encoding: z.enum(["utf-8", "ascii", "gbk"]).default("utf-8"),
   line_ending: z.enum(["none", "cr", "lf", "crlf"]).default("none"),
+});
+
+export const periodicSendRequestSchema = sendRequestSchema.extend({
+  interval_ms: z.number().int().min(10).max(86_400_000),
 });

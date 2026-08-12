@@ -58,6 +58,26 @@ export interface SendPayload {
   line_ending: LineEnding;
 }
 
+export interface PeriodicSendRequest extends SendPayload {
+  interval_ms: number;
+}
+
+export interface PeriodicSendStatus {
+  active: boolean;
+  interval_ms: number | null;
+  sent_count: number;
+  started_at: string | null;
+  last_sent_at: string | null;
+}
+
+export interface SendPreset extends SendPayload {
+  id: string;
+  name: string;
+  updated_at: string;
+}
+
+export type SendPresetDraft = Omit<SendPreset, "id" | "updated_at">;
+
 export interface LogItem {
   id: number;
   time: string;
@@ -70,6 +90,7 @@ export interface LogItem {
 
 export type ServerEvent =
   | { type: "status"; status: TransportStatus }
+  | { type: "periodic_status"; status: PeriodicSendStatus }
   | {
       type: "data";
       timestamp?: string;

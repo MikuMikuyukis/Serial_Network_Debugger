@@ -43,6 +43,18 @@ export interface SendRequest {
   line_ending: LineEnding;
 }
 
+export interface PeriodicSendRequest extends SendRequest {
+  interval_ms: number;
+}
+
+export interface PeriodicSendStatus {
+  active: boolean;
+  interval_ms: number | null;
+  sent_count: number;
+  started_at: string | null;
+  last_sent_at: string | null;
+}
+
 export interface TransportStatus {
   connected: boolean;
   mode: TransportMode | null;
@@ -82,4 +94,9 @@ export interface PingEvent extends BaseEvent {
   type: "ping";
 }
 
-export type ServerEvent = StatusEvent | DataEvent | MessageEvent | PingEvent;
+export interface PeriodicStatusEvent extends BaseEvent {
+  type: "periodic_status";
+  status: PeriodicSendStatus;
+}
+
+export type ServerEvent = StatusEvent | DataEvent | MessageEvent | PingEvent | PeriodicStatusEvent;

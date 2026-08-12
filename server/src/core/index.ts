@@ -1,7 +1,9 @@
 export { encodePayload, formatData, parseHex } from "./codec.js";
 export { EventBroker, type EventListener } from "./event-broker.js";
+export { PeriodicSender, type SendTarget } from "./periodic-sender.js";
 export {
   sendRequestSchema,
+  periodicSendRequestSchema,
   serialConfigSchema,
   tcpClientConfigSchema,
   tcpServerConfigSchema,

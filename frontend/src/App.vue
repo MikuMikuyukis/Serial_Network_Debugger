@@ -7,7 +7,7 @@ import ToastStack, { type ToastMessage } from "./components/ToastStack.vue";
 import TrafficConsole from "./components/TrafficConsole.vue";
 import { useCommunication } from "./composables/useCommunication";
 import { loadTheme, saveTheme, type Theme } from "./storage";
-import type { TransportStatus } from "./types";
+import type { PeriodicSendStatus, TransportStatus } from "./types";
 
 const toasts = ref<ToastMessage[]>([]);
 const theme = ref<Theme>(loadTheme());
@@ -22,7 +22,16 @@ function showToast(message: string, error = true): void {
   }, 3_500);
 }
 
-const { status, logs, paused, eventsConnected, applyStatus, clearLogs } = useCommunication(showToast);
+const {
+  status,
+  periodicStatus,
+  logs,
+  paused,
+  eventsConnected,
+  applyStatus,
+  applyPeriodicStatus,
+  clearLogs,
+} = useCommunication(showToast);
 
 function toggleTheme(): void {
   theme.value = theme.value === "light" ? "dark" : "light";
@@ -32,6 +41,7 @@ function toggleTheme(): void {
 onMounted(async () => {
   try {
     applyStatus(await apiRequest<TransportStatus>("/api/status"));
+    applyPeriodicStatus(await apiRequest<PeriodicSendStatus>("/api/periodic-send"));
   } catch (error) {
     showToast(error instanceof Error ? error.message : "无法读取服务状态");
   }
@@ -70,8 +80,10 @@ onMounted(async () => {
         v-model:paused="paused"
         :connected="status.connected"
         :logs="logs"
+        :periodic-status="periodicStatus"
         @clear="clearLogs"
         @error="showToast"
+        @periodic-status="applyPeriodicStatus"
       />
     </main>
   </div>
