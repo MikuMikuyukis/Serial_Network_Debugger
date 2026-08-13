@@ -169,6 +169,61 @@ export interface SendEditorDraft extends SendPayload {
   interval_ms: number;
 }
 
+export type FrameParserDataType = "uint" | "int" | "float32" | "float64" | "bcd" | "boolean" | "hex" | "ascii";
+export type FrameParserDisplay = "number" | "gauge" | "trend" | "bar" | "status";
+
+export interface FrameParserField {
+  id: string;
+  name: string;
+  offset: number;
+  byte_length: number;
+  data_type: FrameParserDataType;
+  byte_order: ByteOrder;
+  bit_index: number;
+  scale: number;
+  value_offset: number;
+  decimals: number;
+  unit: string;
+  visible: boolean;
+  display: FrameParserDisplay;
+  minimum: number;
+  maximum: number;
+  color: string;
+}
+
+export interface FrameParserConfig {
+  version: 1;
+  id: string;
+  name: string;
+  enabled: boolean;
+  minimum_length: number;
+  match_offset: number;
+  match_hex: string;
+  fields: FrameParserField[];
+}
+
+export interface ReceivedFrame {
+  id: number;
+  timestamp: string;
+  hex: string;
+  peer: string;
+  size: number;
+}
+
+export interface ParsedFieldValue {
+  field_id: string;
+  raw: string;
+  value: number | string | boolean;
+  numeric: number | null;
+  formatted: string;
+}
+
+export interface FrameParseResult {
+  status: "matched" | "unmatched" | "error";
+  message: string;
+  values: ParsedFieldValue[];
+}
+
 export interface LogItem {
   id: number;
   time: string;

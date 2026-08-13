@@ -2,6 +2,10 @@ import type {
   SerialConfig,
   HexFrameField,
   HexFrameConfig,
+  FrameParserConfig,
+  FrameParserDataType,
+  FrameParserDisplay,
+  FrameParserField,
   SendEditorDraft,
   SendPreset,
   TcpClientConfig,
@@ -21,17 +25,40 @@ export interface TransportSettings {
   udp: UdpConfig;
 }
 
+export interface ConfigurationProfile {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
 const SETTINGS_KEY = "snd.transport-settings.v1";
 const THEME_KEY = "snd.theme";
 const SEND_PRESETS_KEY = "snd.send-presets.v1";
 const SEND_EDITOR_KEY = "snd.send-editor.v1";
 const HEX_FRAME_CONFIG_KEY = "snd.hex-frame-config.v1";
+export const FRAME_PARSER_CONFIG_KEY = "snd.frame-parser-config.v1";
+const PROFILES_KEY = "snd.configuration-profiles.v1";
+const ACTIVE_PROFILE_KEY = "snd.active-configuration-profile.v1";
+const DEFAULT_PROFILE_ID = "default";
+export const MAX_CONFIGURATION_PROFILES = 20;
 export const MAX_SEND_PRESETS = 100;
 
 export const DEFAULT_HEX_FRAME_CONFIG: HexFrameConfig = {
   version: 1,
   id: "default-frame",
   enabled: false,
+  fields: [],
+};
+
+export const DEFAULT_FRAME_PARSER_CONFIG: FrameParserConfig = {
+  version: 1,
+  id: "default-parser",
+  name: "接收帧解析",
+  enabled: false,
+  minimum_length: 0,
+  match_offset: 0,
+  match_hex: "",
   fields: [],
 };
 
@@ -77,6 +104,67 @@ export const DEFAULT_TRANSPORT_SETTINGS: TransportSettings = {
   },
 };
 
+export function loadConfigurationProfiles(): ConfigurationProfile[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PROFILES_KEY) ?? "[]") as unknown;
+    if (Array.isArray(stored)) {
+      const profiles = stored
+        .map(normalizeConfigurationProfile)
+        .filter((profile): profile is ConfigurationProfile => profile !== null)
+        .slice(0, MAX_CONFIGURATION_PROFILES);
+      if (profiles.length > 0) return profiles;
+    }
+  } catch {
+    // Fall through and migrate the legacy unscoped settings into the default profile.
+  }
+  const now = new Date().toISOString();
+  const profiles = [{ id: DEFAULT_PROFILE_ID, name: "默认配置", created_at: now, updated_at: now }];
+  try {
+    localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+  } catch {
+    // The caller can still use the in-memory default when local storage is unavailable.
+  }
+  return profiles;
+}
+
+export function saveConfigurationProfiles(profiles: ConfigurationProfile[]): void {
+  localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles.slice(0, MAX_CONFIGURATION_PROFILES)));
+}
+
+export function loadActiveProfileId(): string {
+  const profiles = loadConfigurationProfiles();
+  const stored = localStorage.getItem(ACTIVE_PROFILE_KEY);
+  return profiles.some((profile) => profile.id === stored) ? stored! : profiles[0]!.id;
+}
+
+export function saveActiveProfileId(profileId: string): void {
+  localStorage.setItem(ACTIVE_PROFILE_KEY, profileId);
+}
+
+export function copyConfigurationProfileData(sourceProfileId: string, targetProfileId: string): void {
+  saveTransportSettings(loadTransportSettings(sourceProfileId), targetProfileId);
+  const editor = loadSendEditor(sourceProfileId);
+  const frameConfig = cloneFrameConfigWithNewId(loadHexFrameConfig(sourceProfileId), `profile-${targetProfileId}`);
+  saveSendEditor({ ...editor, ...(editor.frame_config ? { frame_config: frameConfig } : {}) }, targetProfileId);
+  saveHexFrameConfig(frameConfig, targetProfileId);
+  saveSendPresets(loadSendPresets(sourceProfileId).map((preset) => ({
+    ...structuredClone(preset),
+    id: createStorageId(),
+    ...(preset.frame_config
+      ? { frame_config: cloneFrameConfigWithNewId(preset.frame_config, `preset-${targetProfileId}`) }
+      : {}),
+  })), targetProfileId);
+  const parserConfig = loadFrameParserConfig(sourceProfileId);
+  saveFrameParserConfig({ ...structuredClone(parserConfig), id: `parser-${createStorageId()}`.slice(0, 80) }, targetProfileId);
+}
+
+export function removeConfigurationProfileData(profileId: string): void {
+  for (const key of [SETTINGS_KEY, SEND_PRESETS_KEY, SEND_EDITOR_KEY, HEX_FRAME_CONFIG_KEY, FRAME_PARSER_CONFIG_KEY]) {
+    localStorage.removeItem(profileStorageKey(key, profileId));
+    if (profileId === DEFAULT_PROFILE_ID) localStorage.removeItem(key);
+  }
+}
+
 export function cloneTransportSettings(settings: TransportSettings): TransportSettings {
   return {
     version: 1,
@@ -88,9 +176,9 @@ export function cloneTransportSettings(settings: TransportSettings): TransportSe
   };
 }
 
-export function loadTransportSettings(): TransportSettings {
+export function loadTransportSettings(profileId = DEFAULT_PROFILE_ID): TransportSettings {
   try {
-    const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "null") as Partial<TransportSettings> | null;
+    const stored = JSON.parse(readProfileItem(SETTINGS_KEY, profileId) ?? "null") as Partial<TransportSettings> | null;
     if (!stored || stored.version !== 1) return cloneTransportSettings(DEFAULT_TRANSPORT_SETTINGS);
 
     const defaults = DEFAULT_TRANSPORT_SETTINGS;
@@ -108,8 +196,8 @@ export function loadTransportSettings(): TransportSettings {
   }
 }
 
-export function saveTransportSettings(settings: TransportSettings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+export function saveTransportSettings(settings: TransportSettings, profileId = DEFAULT_PROFILE_ID): void {
+  localStorage.setItem(profileStorageKey(SETTINGS_KEY, profileId), JSON.stringify(settings));
 }
 
 export function loadTheme(): Theme {
@@ -128,9 +216,9 @@ export function saveTheme(theme: Theme): void {
   applyTheme(theme);
 }
 
-export function loadSendPresets(): SendPreset[] {
+export function loadSendPresets(profileId = DEFAULT_PROFILE_ID): SendPreset[] {
   try {
-    const stored = JSON.parse(localStorage.getItem(SEND_PRESETS_KEY) ?? "[]") as unknown;
+    const stored = JSON.parse(readProfileItem(SEND_PRESETS_KEY, profileId) ?? "[]") as unknown;
     if (!Array.isArray(stored)) return [];
     return stored
       .map(normalizeSendPreset)
@@ -141,13 +229,21 @@ export function loadSendPresets(): SendPreset[] {
   }
 }
 
-export function saveSendPresets(presets: SendPreset[]): void {
-  localStorage.setItem(SEND_PRESETS_KEY, JSON.stringify(presets.slice(0, MAX_SEND_PRESETS)));
+export function saveSendPresets(presets: SendPreset[], profileId = DEFAULT_PROFILE_ID): void {
+  localStorage.setItem(profileStorageKey(SEND_PRESETS_KEY, profileId), JSON.stringify(presets.slice(0, MAX_SEND_PRESETS)));
 }
 
-export function loadSendEditor(): SendEditorDraft {
+export function cloneSendPreset(preset: SendPreset): SendPreset {
+  return JSON.parse(JSON.stringify(preset)) as SendPreset;
+}
+
+export function sendPresetsStorageKey(profileId = DEFAULT_PROFILE_ID): string {
+  return profileStorageKey(SEND_PRESETS_KEY, profileId);
+}
+
+export function loadSendEditor(profileId = DEFAULT_PROFILE_ID): SendEditorDraft {
   try {
-    const stored = JSON.parse(localStorage.getItem(SEND_EDITOR_KEY) ?? "null") as Partial<SendEditorDraft> | null;
+    const stored = JSON.parse(readProfileItem(SEND_EDITOR_KEY, profileId) ?? "null") as Partial<SendEditorDraft> | null;
     if (!stored || stored.version !== 1) return { ...DEFAULT_SEND_EDITOR };
     return {
       version: 1,
@@ -168,21 +264,142 @@ export function loadSendEditor(): SendEditorDraft {
   }
 }
 
-export function saveSendEditor(editor: SendEditorDraft): void {
-  localStorage.setItem(SEND_EDITOR_KEY, JSON.stringify(editor));
+export function saveSendEditor(editor: SendEditorDraft, profileId = DEFAULT_PROFILE_ID): void {
+  localStorage.setItem(profileStorageKey(SEND_EDITOR_KEY, profileId), JSON.stringify(editor));
 }
 
-export function loadHexFrameConfig(): HexFrameConfig {
+export function sendEditorStorageKey(profileId = DEFAULT_PROFILE_ID): string {
+  return profileStorageKey(SEND_EDITOR_KEY, profileId);
+}
+
+export function loadHexFrameConfig(profileId = DEFAULT_PROFILE_ID): HexFrameConfig {
   try {
-    const stored = JSON.parse(localStorage.getItem(HEX_FRAME_CONFIG_KEY) ?? "null") as unknown;
+    const stored = JSON.parse(readProfileItem(HEX_FRAME_CONFIG_KEY, profileId) ?? "null") as unknown;
     return normalizeHexFrameConfig(stored) ?? structuredClone(DEFAULT_HEX_FRAME_CONFIG);
   } catch {
     return structuredClone(DEFAULT_HEX_FRAME_CONFIG);
   }
 }
 
-export function saveHexFrameConfig(config: HexFrameConfig): void {
-  localStorage.setItem(HEX_FRAME_CONFIG_KEY, JSON.stringify(config));
+export function saveHexFrameConfig(config: HexFrameConfig, profileId = DEFAULT_PROFILE_ID): void {
+  localStorage.setItem(profileStorageKey(HEX_FRAME_CONFIG_KEY, profileId), JSON.stringify(config));
+}
+
+export function hexFrameStorageKey(profileId = DEFAULT_PROFILE_ID): string {
+  return profileStorageKey(HEX_FRAME_CONFIG_KEY, profileId);
+}
+
+export function loadFrameParserConfig(profileId = DEFAULT_PROFILE_ID): FrameParserConfig {
+  try {
+    const stored = JSON.parse(readProfileItem(FRAME_PARSER_CONFIG_KEY, profileId) ?? "null") as unknown;
+    return normalizeFrameParserConfig(stored) ?? structuredClone(DEFAULT_FRAME_PARSER_CONFIG);
+  } catch {
+    return structuredClone(DEFAULT_FRAME_PARSER_CONFIG);
+  }
+}
+
+export function saveFrameParserConfig(config: FrameParserConfig, profileId = DEFAULT_PROFILE_ID): void {
+  localStorage.setItem(profileStorageKey(FRAME_PARSER_CONFIG_KEY, profileId), JSON.stringify(config));
+}
+
+export function frameParserStorageKey(profileId = DEFAULT_PROFILE_ID): string {
+  return profileStorageKey(FRAME_PARSER_CONFIG_KEY, profileId);
+}
+
+function profileStorageKey(baseKey: string, profileId: string): string {
+  return `snd.profile.${encodeURIComponent(profileId)}.${baseKey.slice(4)}`;
+}
+
+function cloneFrameConfigWithNewId(config: HexFrameConfig, prefix: string): HexFrameConfig {
+  return { ...structuredClone(config), id: `${prefix}-${createStorageId()}`.slice(0, 80) };
+}
+
+function createStorageId(): string {
+  return typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function readProfileItem(baseKey: string, profileId: string): string | null {
+  const scoped = localStorage.getItem(profileStorageKey(baseKey, profileId));
+  if (scoped !== null) return scoped;
+  return profileId === DEFAULT_PROFILE_ID ? localStorage.getItem(baseKey) : null;
+}
+
+function normalizeConfigurationProfile(value: unknown): ConfigurationProfile | null {
+  if (!value || typeof value !== "object") return null;
+  const profile = value as Partial<ConfigurationProfile>;
+  if (!isBoundedString(profile.id, 1, 80)
+    || !isBoundedString(profile.name, 1, 40)
+    || !isBoundedString(profile.created_at, 1, 40)
+    || !isBoundedString(profile.updated_at, 1, 40)) return null;
+  return {
+    id: profile.id,
+    name: profile.name,
+    created_at: profile.created_at,
+    updated_at: profile.updated_at,
+  };
+}
+
+function normalizeFrameParserConfig(value: unknown): FrameParserConfig | null {
+  if (!value || typeof value !== "object") return null;
+  const config = value as Partial<FrameParserConfig>;
+  if (config.version !== 1
+    || !isBoundedString(config.id, 1, 80)
+    || !isBoundedString(config.name, 1, 60)
+    || typeof config.enabled !== "boolean"
+    || !isIntegerInRange(config.minimum_length, 0, 65_535)
+    || !isIntegerInRange(config.match_offset, 0, 65_535)
+    || !isBoundedString(config.match_hex, 0, 131_070)
+    || !Array.isArray(config.fields)
+    || config.fields.length > 32) return null;
+  const fields = config.fields.map(normalizeFrameParserField);
+  if (fields.some((field) => field === null)) return null;
+  const normalizedFields = fields as FrameParserField[];
+  if (new Set(normalizedFields.map((field) => field.id)).size !== normalizedFields.length) return null;
+  return {
+    version: 1,
+    id: config.id,
+    name: config.name,
+    enabled: config.enabled,
+    minimum_length: config.minimum_length,
+    match_offset: config.match_offset,
+    match_hex: config.match_hex,
+    fields: normalizedFields,
+  };
+}
+
+function normalizeFrameParserField(value: unknown): FrameParserField | null {
+  if (!value || typeof value !== "object") return null;
+  const field = value as Partial<FrameParserField>;
+  if (!isBoundedString(field.id, 1, 80)
+    || !isBoundedString(field.name, 1, 60)
+    || !isIntegerInRange(field.offset, 0, 65_535)
+    || !isIntegerInRange(field.byte_length, 1, 64)
+    || !isFrameParserDataType(field.data_type)
+    || !isByteOrder(field.byte_order)
+    || !isIntegerInRange(field.bit_index, 0, 511)
+    || !isFiniteNumber(field.scale)
+    || !isFiniteNumber(field.value_offset)
+    || !isIntegerInRange(field.decimals, 0, 8)
+    || !isBoundedString(field.unit, 0, 20)
+    || typeof field.visible !== "boolean"
+    || !isFrameParserDisplay(field.display)
+    || !isFiniteNumber(field.minimum)
+    || !isFiniteNumber(field.maximum)
+    || field.minimum >= field.maximum
+    || typeof field.color !== "string"
+    || !/^#[0-9A-F]{6}$/i.test(field.color)) return null;
+  return field as FrameParserField;
+}
+
+function isFrameParserDataType(value: unknown): value is FrameParserDataType {
+  return value === "uint" || value === "int" || value === "float32" || value === "float64"
+    || value === "bcd" || value === "boolean" || value === "hex" || value === "ascii";
+}
+
+function isFrameParserDisplay(value: unknown): value is FrameParserDisplay {
+  return value === "number" || value === "gauge" || value === "trend" || value === "bar" || value === "status";
 }
 
 function normalizeHexFrameConfig(value: unknown): HexFrameConfig | null {

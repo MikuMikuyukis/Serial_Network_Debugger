@@ -39,6 +39,30 @@ function createWindow(url: string): BrowserWindow {
     mainWindow = null;
   });
   window.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
+    const target = new URL(targetUrl);
+    const applicationOrigin = new URL(url).origin;
+    const tool = target.searchParams.get("tool");
+    if (target.origin === applicationOrigin
+      && target.pathname === "/"
+      && (tool === "presets" || tool === "dashboard" || tool === "parser")) {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          width: tool === "parser" ? 1040 : 900,
+          height: tool === "parser" ? 760 : 680,
+          minWidth: tool === "parser" ? 760 : 560,
+          minHeight: 480,
+          backgroundColor: "#f5f7fa",
+          autoHideMenuBar: true,
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            spellcheck: false,
+          },
+        },
+      };
+    }
     if (targetUrl.startsWith("https://") || targetUrl.startsWith("http://")) {
       void shell.openExternal(targetUrl);
     }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Eraser, PanelRight, Pause, Play, Repeat, Send, Settings, Square } from "@lucide/vue";
+import { Eraser, ExternalLink, Gauge, List, PanelRight, Pause, Play, Repeat, Send, Settings, Square, X } from "@lucide/vue";
 import { apiRequest } from "../api";
 import {
   compactHexDisplay,
@@ -10,7 +10,9 @@ import {
   MAX_HEX_DISPLAY_LENGTH,
 } from "../hex-display";
 import {
+  cloneSendPreset,
   DEFAULT_HEX_FRAME_CONFIG,
+  hexFrameStorageKey,
   loadSendEditor,
   loadHexFrameConfig,
   loadSendPresets,
@@ -18,6 +20,8 @@ import {
   saveSendEditor,
   saveHexFrameConfig,
   saveSendPresets,
+  sendEditorStorageKey,
+  sendPresetsStorageKey,
 } from "../storage";
 import type {
   DataFormat,
@@ -26,6 +30,7 @@ import type {
   LogItem,
   PeriodicSendRequest,
   PeriodicSendStatus,
+  ReceivedFrame,
   SendPayload,
   SendPreset,
   SendPresetDraft,
@@ -34,13 +39,17 @@ import type {
 import SendPresetPanel from "./SendPresetPanel.vue";
 import HexFrameBuilder from "./HexFrameBuilder.vue";
 import FrameGeneratedControls from "./FrameGeneratedControls.vue";
+import FrameAnalyzer from "./FrameAnalyzer.vue";
 import VirtualLog from "./VirtualLog.vue";
 
 const props = defineProps<{
+  profileId: string;
   connected: boolean;
   logs: LogItem[];
+  receivedFrames: ReceivedFrame[];
   paused: boolean;
   periodicStatus: PeriodicSendStatus;
+  toolOnly?: "presets";
 }>();
 
 const emit = defineEmits<{
@@ -48,31 +57,39 @@ const emit = defineEmits<{
   clear: [];
   "update:paused": [paused: boolean];
   "periodic-status": [status: PeriodicSendStatus];
+  "close-tool": [];
 }>();
 
 const displayHex = ref(false);
 const autoScroll = ref(true);
-const storedEditor = loadSendEditor();
+type WorkspaceTool = "presets" | "dashboard" | "parser";
+const TOOL_ORDER: WorkspaceTool[] = ["presets", "dashboard", "parser"];
+const activeTool = ref<WorkspaceTool>("presets");
+const analyzerView = ref<"dashboard" | "parser">("dashboard");
+const toolPanelOpen = ref(true);
+const detachedTools = ref<Record<WorkspaceTool, boolean>>({ presets: false, dashboard: false, parser: false });
+const storedEditor = loadSendEditor(props.profileId);
 const format = ref<DataFormat>(storedEditor.format);
 const textEncoding = ref<TextEncoding>(storedEditor.text_encoding);
 const lineEnding = ref<LineEnding>(storedEditor.line_ending);
 const sendData = ref(storedEditor.data);
-const frameConfig = ref<HexFrameConfig>(loadHexFrameConfig());
+const frameConfig = ref<HexFrameConfig>(loadHexFrameConfig(props.profileId));
 const frameBuilderOpen = ref(false);
 const presetFrameBuilderOpen = ref(false);
 const presetFrameTargetId = ref<string | null>(null);
 const intervalMs = ref(storedEditor.interval_ms);
 const sending = ref(false);
 const changingPeriodic = ref(false);
-const presets = ref<SendPreset[]>(loadSendPresets());
+const presets = ref<SendPreset[]>(loadSendPresets(props.profileId));
 const presetFramePreviews = ref<Record<string, { hex: string; error: string; loading: boolean }>>({});
-const presetsOpen = ref(true);
 const sendingPresetId = ref<string | null>(null);
 const sequenceRunning = ref(false);
 let sequenceGeneration = 0;
 let editorSaveTimer: number | undefined;
 let presetSaveTimer: number | undefined;
 let presetPreviewTimer: number | undefined;
+const detachedWindows = new Map<WorkspaceTool, Window>();
+const detachedWindowTimers = new Map<WorkspaceTool, number>();
 const presetPreviewSignatures = new Map<string, string>();
 const presetPreviewGenerations = new Map<string, number>();
 const pendingAutoSendPresetIds = new Set<string>();
@@ -118,15 +135,103 @@ watch(
   schedulePresetPreviewRefresh,
   { deep: true, immediate: true },
 );
-onMounted(() => window.addEventListener("beforeunload", persistPendingState));
+onMounted(() => {
+  window.addEventListener("beforeunload", persistPendingState);
+  window.addEventListener("storage", handleStorageChange);
+});
 onBeforeUnmount(() => {
   sequenceGeneration += 1;
   window.removeEventListener("beforeunload", persistPendingState);
+  window.removeEventListener("storage", handleStorageChange);
   persistPendingState();
   if (editorSaveTimer !== undefined) window.clearTimeout(editorSaveTimer);
   if (presetSaveTimer !== undefined) window.clearTimeout(presetSaveTimer);
   if (presetPreviewTimer !== undefined) window.clearTimeout(presetPreviewTimer);
+  for (const timer of detachedWindowTimers.values()) window.clearInterval(timer);
+  detachedWindowTimers.clear();
 });
+
+function selectTool(tool: WorkspaceTool): void {
+  if (detachedTools.value[tool]) {
+    focusDetachedTool(tool);
+    return;
+  }
+  activeTool.value = tool;
+  if (tool === "dashboard" || tool === "parser") analyzerView.value = tool;
+  toolPanelOpen.value = true;
+}
+
+function openDetachedTool(tool = activeTool.value): void {
+  const existing = detachedWindows.get(tool);
+  if (existing && !existing.closed) {
+    existing.focus();
+    return;
+  }
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.searchParams.set("tool", tool);
+  url.searchParams.set("profile", props.profileId);
+  const popup = window.open(
+    url,
+    `snd-${tool}-${props.profileId}`,
+    tool === "parser" ? "popup,width=1040,height=760" : "popup,width=900,height=680",
+  );
+  if (!popup) {
+    emit("error", "独立窗口被浏览器拦截，请允许此站点打开弹出式窗口");
+    return;
+  }
+  detachedWindows.set(tool, popup);
+  detachedTools.value = { ...detachedTools.value, [tool]: true };
+  popup.focus();
+  selectNextAvailableTool(tool);
+  const timer = window.setInterval(() => {
+    if (!popup.closed) return;
+    restoreDetachedTool(tool);
+  }, 300);
+  detachedWindowTimers.set(tool, timer);
+}
+
+function selectNextAvailableTool(detachedTool: WorkspaceTool): void {
+  if (props.toolOnly || activeTool.value !== detachedTool) return;
+  const nextTool = TOOL_ORDER.find((tool) => !detachedTools.value[tool]);
+  if (nextTool) selectTool(nextTool);
+  else toolPanelOpen.value = false;
+}
+
+function restoreDetachedTool(tool: WorkspaceTool): void {
+  const timer = detachedWindowTimers.get(tool);
+  if (timer !== undefined) window.clearInterval(timer);
+  detachedWindowTimers.delete(tool);
+  detachedWindows.delete(tool);
+  detachedTools.value = { ...detachedTools.value, [tool]: false };
+  selectTool(tool);
+}
+
+function focusDetachedTool(tool: WorkspaceTool): void {
+  const popup = detachedWindows.get(tool);
+  if (popup && !popup.closed) popup.focus();
+}
+
+function handleStorageChange(event: StorageEvent): void {
+  if (event.storageArea !== localStorage) return;
+  if (event.key === sendPresetsStorageKey(props.profileId)) {
+    const storedPresets = loadSendPresets(props.profileId);
+    if (JSON.stringify(storedPresets) !== JSON.stringify(presets.value)) presets.value = storedPresets;
+    return;
+  }
+  if (event.key === sendEditorStorageKey(props.profileId)) {
+    const editor = loadSendEditor(props.profileId);
+    sendData.value = editor.data;
+    format.value = editor.format;
+    textEncoding.value = editor.text_encoding;
+    lineEnding.value = editor.line_ending;
+    intervalMs.value = editor.interval_ms;
+    return;
+  }
+  if (event.key === hexFrameStorageKey(props.profileId)) {
+    frameConfig.value = loadHexFrameConfig(props.profileId);
+  }
+}
 
 async function sendPayload(payload: SendPayload): Promise<Record<string, string> | null> {
   const response = await apiRequest<{
@@ -260,7 +365,7 @@ function applyPresetFrameConfig(config: HexFrameConfig): void {
 function applyFrameConfig(config: HexFrameConfig): void {
   frameConfig.value = config;
   try {
-    saveHexFrameConfig(config);
+    saveHexFrameConfig(config, props.profileId);
   } catch {
     emit("error", "HEX 帧配置保存失败，请检查浏览器本地存储空间");
   }
@@ -367,6 +472,48 @@ function addPreset(): void {
   schedulePresetSave();
 }
 
+function duplicatePreset(source: SendPreset): void {
+  if (presets.value.length >= MAX_SEND_PRESETS) {
+    emit("error", `发送预设最多保存 ${MAX_SEND_PRESETS} 条`);
+    return;
+  }
+  const index = presets.value.findIndex((preset) => preset.id === source.id);
+  if (index < 0) return;
+  const id = createPresetId();
+  const duplicate: SendPreset = {
+    ...cloneSendPreset(source),
+    id,
+    name: duplicatePresetName(source.name),
+    updated_at: new Date().toISOString(),
+    ...(source.frame_config
+      ? { frame_config: { ...cloneFrameConfig(source.frame_config), id: createFrameConfigId(`preset-${id}`) } }
+      : {}),
+  };
+  presets.value.splice(index + 1, 0, duplicate);
+  schedulePresetSave();
+}
+
+function reorderPreset(draggedId: string, targetId: string, placement: "before" | "after"): void {
+  if (draggedId === targetId) return;
+  const sourceIndex = presets.value.findIndex((preset) => preset.id === draggedId);
+  if (sourceIndex < 0) return;
+  const [preset] = presets.value.splice(sourceIndex, 1);
+  if (!preset) return;
+  const targetIndex = presets.value.findIndex((item) => item.id === targetId);
+  if (targetIndex < 0) {
+    presets.value.splice(sourceIndex, 0, preset);
+    return;
+  }
+  presets.value.splice(targetIndex + (placement === "after" ? 1 : 0), 0, preset);
+  schedulePresetSave();
+}
+
+function duplicatePresetName(name: string): string {
+  const base = name.trim() || "未命名";
+  const suffix = " 副本";
+  return `${base.slice(0, 60 - suffix.length)}${suffix}`;
+}
+
 function updatePreset(id: string, changes: Partial<SendPresetDraft>): void {
   const now = new Date().toISOString();
   const index = presets.value.findIndex((preset) => preset.id === id);
@@ -438,7 +585,7 @@ function persistEditor(): void {
       version: 1,
       ...editorPayload.value,
       interval_ms: intervalMs.value,
-    });
+    }, props.profileId);
   } catch {
     emit("error", "发送区内容保存失败，请检查浏览器本地存储空间");
   }
@@ -515,7 +662,7 @@ async function refreshPresetPreview(
 
 function persistPresets(): void {
   try {
-    saveSendPresets(presets.value);
+    saveSendPresets(presets.value, props.profileId);
   } catch {
     emit("error", "发送预设保存失败，请检查浏览器本地存储空间");
   }
@@ -525,6 +672,8 @@ function persistPendingState(): void {
   persistEditor();
   persistPresets();
 }
+
+defineExpose({ persistPendingState });
 
 function createPresetId(): string {
   return typeof crypto.randomUUID === "function"
@@ -557,28 +706,30 @@ function emitError(error: unknown, fallback: string): void {
 </script>
 
 <template>
-  <section class="console-area">
-    <div class="console-toolbar">
-      <div>
-        <span class="eyebrow">LIVE TRAFFIC</span>
-        <h2>通信日志</h2>
+    <section class="console-area" :class="{ 'tool-only-console': toolOnly }">
+      <div v-if="toolOnly === 'presets'" class="detached-tool-header">
+        <div><span class="eyebrow">TOOL WINDOW</span><strong>发送预设</strong></div>
+        <button class="icon-tool-button" type="button" title="关闭窗口" aria-label="关闭窗口" @click="emit('close-tool')"><X :size="16" /></button>
       </div>
-      <div class="toolbar-actions">
-        <label class="toggle">
-          <input v-model="displayHex" type="checkbox" />
-          <span>HEX 显示</span>
-        </label>
-        <label class="toggle">
-          <input v-model="autoScroll" type="checkbox" />
-          <span>自动滚动</span>
+
+      <div v-if="!toolOnly" class="console-toolbar">
+        <div class="console-view-heading"><span class="eyebrow">RECEIVE</span><strong><List :size="15" />通信日志</strong></div>
+        <div class="toolbar-actions">
+          <label class="toggle">
+            <input v-model="displayHex" type="checkbox" />
+            <span>HEX 显示</span>
+          </label>
+          <label class="toggle">
+            <input v-model="autoScroll" type="checkbox" />
+            <span>自动滚动</span>
         </label>
         <button
           class="icon-tool-button"
-          :class="{ active: presetsOpen }"
+          :class="{ active: toolPanelOpen }"
           type="button"
-          :title="presetsOpen ? '关闭发送预设' : '打开发送预设'"
-          :aria-label="presetsOpen ? '关闭发送预设' : '打开发送预设'"
-          @click="presetsOpen = !presetsOpen"
+          :title="toolPanelOpen ? '关闭工具面板' : '打开工具面板'"
+          :aria-label="toolPanelOpen ? '关闭工具面板' : '打开工具面板'"
+          @click="toolPanelOpen = !toolPanelOpen"
         >
           <PanelRight :size="16" />
         </button>
@@ -598,19 +749,69 @@ function emitError(error: unknown, fallback: string): void {
       </div>
     </div>
 
-    <div class="traffic-workspace" :class="{ 'presets-open': presetsOpen }">
+    <div v-if="!toolOnly" class="traffic-workspace" :class="{ 'tool-panel-open': toolPanelOpen }">
       <VirtualLog :logs="logs" :display-hex="displayHex" :auto-scroll="autoScroll" />
+      <aside v-show="toolPanelOpen" class="workspace-tool-panel">
+        <header class="workspace-tool-tabs">
+          <div role="tablist" aria-label="工具面板">
+            <button v-if="!detachedTools.presets" type="button" :class="{ active: activeTool === 'presets' }" @click="selectTool('presets')"><List :size="13" />发送预设</button>
+            <button v-if="!detachedTools.dashboard" type="button" :class="{ active: activeTool === 'dashboard' }" @click="selectTool('dashboard')"><Gauge :size="13" />仪表盘</button>
+            <button v-if="!detachedTools.parser" type="button" :class="{ active: activeTool === 'parser' }" @click="selectTool('parser')"><Settings :size="13" />解析配置</button>
+          </div>
+          <div>
+            <button class="icon-tool-button" type="button" title="拆分到独立窗口" aria-label="拆分当前工具到独立窗口" @click="openDetachedTool()"><ExternalLink :size="14" /></button>
+            <button class="icon-tool-button" type="button" title="关闭工具面板" aria-label="关闭工具面板" @click="toolPanelOpen = false"><X :size="14" /></button>
+          </div>
+        </header>
+        <SendPresetPanel
+          v-show="activeTool === 'presets'"
+          :presets="presets"
+          :preset-frame-previews="presetFramePreviews"
+          :connected="connected"
+          open
+          :editor-locked="periodicStatus.active"
+          :sending-preset-id="sendingPresetId"
+          :sequence-running="sequenceRunning"
+          :closable="false"
+          @close="toolPanelOpen = false"
+          @add="addPreset"
+          @update="updatePreset"
+          @duplicate="duplicatePreset"
+          @reorder="reorderPreset"
+          @remove="removePreset"
+          @load="loadPreset"
+          @send="sendPreset"
+          @edit-frame="openPresetFrameBuilder"
+          @update-generated="updatePresetGeneratedField"
+          @commit-generated="commitPresetGeneratedField"
+          @toggle-sequence="toggleSequence"
+        />
+        <FrameAnalyzer
+          v-show="activeTool === 'dashboard' || activeTool === 'parser'"
+          :profile-id="profileId"
+          :frames="receivedFrames"
+          :view="analyzerView"
+          @request-view="selectTool"
+          @error="emit('error', $event)"
+        />
+      </aside>
+    </div>
+
+    <div v-else class="detached-preset-content">
       <SendPresetPanel
         :presets="presets"
         :preset-frame-previews="presetFramePreviews"
         :connected="connected"
-        :open="presetsOpen"
+        open
         :editor-locked="periodicStatus.active"
         :sending-preset-id="sendingPresetId"
         :sequence-running="sequenceRunning"
-        @close="presetsOpen = false"
+        :closable="false"
+        @close="emit('close-tool')"
         @add="addPreset"
         @update="updatePreset"
+        @duplicate="duplicatePreset"
+        @reorder="reorderPreset"
         @remove="removePreset"
         @load="loadPreset"
         @send="sendPreset"
@@ -621,7 +822,7 @@ function emitError(error: unknown, fallback: string): void {
       />
     </div>
 
-    <form class="send-panel" @submit.prevent="send">
+    <form v-if="!toolOnly" class="send-panel" @submit.prevent="send">
       <div class="send-options">
         <div class="segmented" aria-label="发送格式">
           <label><input v-model="format" type="radio" value="text" :disabled="periodicStatus.active" /><span>文本</span></label>

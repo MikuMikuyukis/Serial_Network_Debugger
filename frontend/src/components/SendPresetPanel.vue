@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Download, ListStart, Plus, Send, Settings, Square, Trash2, X } from "@lucide/vue";
+import { ref } from "vue";
+import { Copy, Download, GripVertical, ListStart, Plus, Send, Settings, Square, Trash2, X } from "@lucide/vue";
 import {
   compactHexDisplay,
   deleteAcrossHexDisplaySpace,
@@ -18,12 +19,15 @@ defineProps<{
   editorLocked: boolean;
   sendingPresetId: string | null;
   sequenceRunning: boolean;
+  closable?: boolean;
 }>();
 
 const emit = defineEmits<{
   close: [];
   add: [];
   update: [id: string, changes: Partial<SendPresetDraft>];
+  duplicate: [preset: SendPreset];
+  reorder: [draggedId: string, targetId: string, placement: "before" | "after"];
   remove: [preset: SendPreset];
   load: [preset: SendPreset];
   send: [preset: SendPreset];
@@ -32,6 +36,43 @@ const emit = defineEmits<{
   "commit-generated": [presetId: string];
   "toggle-sequence": [];
 }>();
+
+const draggedPresetId = ref<string | null>(null);
+const dragOverPresetId = ref<string | null>(null);
+const dragPlacement = ref<"before" | "after">("before");
+
+function startPresetDrag(presetId: string, event: DragEvent): void {
+  if ((event.currentTarget as HTMLButtonElement).disabled) {
+    event.preventDefault();
+    return;
+  }
+  draggedPresetId.value = presetId;
+  event.dataTransfer?.setData("text/plain", presetId);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+}
+
+function updatePresetDragTarget(presetId: string, event: DragEvent): void {
+  if (!draggedPresetId.value || draggedPresetId.value === presetId) {
+    dragOverPresetId.value = null;
+    return;
+  }
+  const row = event.currentTarget as HTMLTableRowElement;
+  dragOverPresetId.value = presetId;
+  dragPlacement.value = event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2 ? "before" : "after";
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+}
+
+function dropPreset(targetId: string): void {
+  if (draggedPresetId.value && draggedPresetId.value !== targetId) {
+    emit("reorder", draggedPresetId.value, targetId, dragPlacement.value);
+  }
+  endPresetDrag();
+}
+
+function endPresetDrag(): void {
+  draggedPresetId.value = null;
+  dragOverPresetId.value = null;
+}
 
 function hasIndependentFramePayload(preset: SendPreset): boolean {
   const config = preset.frame_config;
@@ -154,7 +195,7 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
           <Plus :size="15" />
           <span>添加</span>
         </button>
-        <button class="icon-tool-button" type="button" title="关闭预设列表" aria-label="关闭预设列表" @click="emit('close')">
+        <button v-if="closable !== false" class="icon-tool-button" type="button" title="关闭预设列表" aria-label="关闭预设列表" @click="emit('close')">
           <X :size="16" />
         </button>
       </div>
@@ -174,16 +215,39 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
         </thead>
         <tbody>
           <template v-for="(preset, index) in presets" :key="preset.id">
-          <tr :class="{ disabled: !preset.enabled }">
+          <tr
+            :class="{
+              disabled: !preset.enabled,
+              dragging: draggedPresetId === preset.id,
+              'drag-over-before': dragOverPresetId === preset.id && dragPlacement === 'before',
+              'drag-over-after': dragOverPresetId === preset.id && dragPlacement === 'after',
+            }"
+            @dragover.prevent="updatePresetDragTarget(preset.id, $event)"
+            @drop.prevent="dropPreset(preset.id)"
+          >
             <td class="preset-col-enabled">
-              <label class="preset-check" :title="preset.enabled ? '禁用此预设' : '启用此预设'">
-                <input
-                  type="checkbox"
-                  :checked="preset.enabled"
-                  @change="emit('update', preset.id, { enabled: checkedValue($event) })"
-                />
-                <span>{{ index + 1 }}</span>
-              </label>
+              <div class="preset-order-cell">
+                <button
+                  class="preset-drag-handle"
+                  type="button"
+                  title="拖拽排序"
+                  aria-label="拖拽预设排序"
+                  draggable="true"
+                  :disabled="editorLocked || sequenceRunning"
+                  @dragstart.stop="startPresetDrag(preset.id, $event)"
+                  @dragend="endPresetDrag"
+                >
+                  <GripVertical :size="14" />
+                </button>
+                <label class="preset-check" :title="preset.enabled ? '禁用此预设' : '启用此预设'">
+                  <input
+                    type="checkbox"
+                    :checked="preset.enabled"
+                    @change="emit('update', preset.id, { enabled: checkedValue($event) })"
+                  />
+                  <span>{{ index + 1 }}</span>
+                </label>
+              </div>
             </td>
             <td class="preset-col-name">
               <input
@@ -261,10 +325,20 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
                   type="button"
                   title="载入发送区"
                   aria-label="载入发送区"
-                  :disabled="editorLocked"
+                  :disabled="editorLocked || sequenceRunning"
                   @click="emit('load', preset)"
                 >
                   <Download :size="15" />
+                </button>
+                <button
+                  class="preset-action"
+                  type="button"
+                  title="复制预设"
+                  aria-label="复制预设"
+                  :disabled="editorLocked"
+                  @click="emit('duplicate', preset)"
+                >
+                  <Copy :size="15" />
                 </button>
                 <button
                   class="preset-action frame"

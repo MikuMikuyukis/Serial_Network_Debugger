@@ -1,8 +1,9 @@
 import { onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
-import type { LogItem, PeriodicSendStatus, ServerEvent, TransportStatus } from "../types";
+import type { LogItem, PeriodicSendStatus, ReceivedFrame, ServerEvent, TransportStatus } from "../types";
 
 const MAX_LOGS = 5_000;
 const FLUSH_INTERVAL_MS = 50;
+const MAX_RECEIVED_FRAMES = 1_000;
 
 const EMPTY_STATUS: TransportStatus = {
   connected: false,
@@ -33,10 +34,13 @@ export function useCommunication(onError: (message: string) => void) {
   const status = ref<TransportStatus>({ ...EMPTY_STATUS });
   const periodicStatus = ref<PeriodicSendStatus>({ ...EMPTY_PERIODIC_STATUS });
   const logs = shallowRef<LogItem[]>([]);
+  const receivedFrames = shallowRef<ReceivedFrame[]>([]);
   const paused = ref(false);
   const eventsConnected = ref(false);
   const pending: LogItem[] = [];
+  const pendingFrames: ReceivedFrame[] = [];
   let nextLogId = 1;
+  let nextFrameId = 1;
   let socket: WebSocket | null = null;
   let reconnectTimer: number | undefined;
   let flushTimer: number | undefined;
@@ -59,9 +63,19 @@ export function useCommunication(onError: (message: string) => void) {
       applyPeriodicStatus(event.status);
       return;
     }
-    if (event.type === "ping" || paused.value) return;
+    if (event.type === "ping") return;
 
     if (event.type === "data") {
+      if (event.direction === "rx") {
+        pendingFrames.push({
+          id: nextFrameId++,
+          timestamp: event.timestamp ?? new Date().toISOString(),
+          hex: event.hex,
+          peer: event.peer ?? "",
+          size: event.size,
+        });
+      }
+      if (paused.value) return;
       pending.push({
         id: nextLogId++,
         time: eventTime(event.timestamp),
@@ -73,6 +87,8 @@ export function useCommunication(onError: (message: string) => void) {
       });
       return;
     }
+
+    if (paused.value) return;
 
     pending.push({
       id: nextLogId++,
@@ -87,9 +103,14 @@ export function useCommunication(onError: (message: string) => void) {
   }
 
   function flushLogs(): void {
-    if (pending.length === 0) return;
-    const merged = logs.value.concat(pending.splice(0, pending.length));
-    logs.value = merged.length > MAX_LOGS ? merged.slice(-MAX_LOGS) : merged;
+    if (pending.length > 0) {
+      const merged = logs.value.concat(pending.splice(0, pending.length));
+      logs.value = merged.length > MAX_LOGS ? merged.slice(-MAX_LOGS) : merged;
+    }
+    if (pendingFrames.length > 0) {
+      const merged = receivedFrames.value.concat(pendingFrames.splice(0, pendingFrames.length));
+      receivedFrames.value = merged.length > MAX_RECEIVED_FRAMES ? merged.slice(-MAX_RECEIVED_FRAMES) : merged;
+    }
   }
 
   function clearLogs(): void {
@@ -139,6 +160,7 @@ export function useCommunication(onError: (message: string) => void) {
     status,
     periodicStatus,
     logs,
+    receivedFrames,
     paused,
     eventsConnected,
     applyStatus,
