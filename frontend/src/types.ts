@@ -157,6 +157,7 @@ export interface SendPreset extends SendPayload {
   id: string;
   name: string;
   enabled: boolean;
+  auto_send_on_change: boolean;
   delay_ms: number;
   updated_at: string;
 }

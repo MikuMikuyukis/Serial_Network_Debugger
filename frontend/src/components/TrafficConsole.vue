@@ -65,12 +65,17 @@ const intervalMs = ref(storedEditor.interval_ms);
 const sending = ref(false);
 const changingPeriodic = ref(false);
 const presets = ref<SendPreset[]>(loadSendPresets());
+const presetFramePreviews = ref<Record<string, { hex: string; error: string; loading: boolean }>>({});
 const presetsOpen = ref(true);
 const sendingPresetId = ref<string | null>(null);
 const sequenceRunning = ref(false);
 let sequenceGeneration = 0;
 let editorSaveTimer: number | undefined;
 let presetSaveTimer: number | undefined;
+let presetPreviewTimer: number | undefined;
+const presetPreviewSignatures = new Map<string, string>();
+const presetPreviewGenerations = new Map<string, number>();
+const pendingAutoSendPresetIds = new Set<string>();
 const placeholder = computed(() => format.value === "hex" ? "AA 55 01 00" : "输入发送内容");
 const displayedSendData = computed(() => (
   format.value === "hex" ? formatHexDisplay(sendData.value) : sendData.value
@@ -103,6 +108,16 @@ watch(() => props.periodicStatus.interval_ms, (value) => {
   if (value !== null) intervalMs.value = value;
 });
 watch(() => props.periodicStatus.frame_sequences, applyFrameSequences, { deep: true });
+watch(
+  () => presets.value.map((preset) => ({
+    id: preset.id,
+    data: preset.data,
+    format: preset.format,
+    frame_config: preset.frame_config,
+  })),
+  schedulePresetPreviewRefresh,
+  { deep: true, immediate: true },
+);
 onMounted(() => window.addEventListener("beforeunload", persistPendingState));
 onBeforeUnmount(() => {
   sequenceGeneration += 1;
@@ -110,6 +125,7 @@ onBeforeUnmount(() => {
   persistPendingState();
   if (editorSaveTimer !== undefined) window.clearTimeout(editorSaveTimer);
   if (presetSaveTimer !== undefined) window.clearTimeout(presetSaveTimer);
+  if (presetPreviewTimer !== undefined) window.clearTimeout(presetPreviewTimer);
 });
 
 async function sendPayload(payload: SendPayload): Promise<Record<string, string> | null> {
@@ -283,6 +299,27 @@ function updatePresetGeneratedField(presetId: string, fieldId: string, value: st
   updatePreset(presetId, { frame_config: { ...config, fields } });
 }
 
+function commitPresetGeneratedField(presetId: string): void {
+  const preset = presets.value.find((item) => item.id === presetId);
+  if (!preset?.auto_send_on_change || !preset.enabled || !props.connected) return;
+  if (sequenceRunning.value || !canSendPreset(preset)) return;
+  pendingAutoSendPresetIds.add(presetId);
+  void flushPendingAutoSend();
+}
+
+async function flushPendingAutoSend(): Promise<void> {
+  if (sendingPresetId.value !== null || sequenceRunning.value) return;
+  const presetId = pendingAutoSendPresetIds.values().next().value as string | undefined;
+  if (!presetId) return;
+  pendingAutoSendPresetIds.delete(presetId);
+  const preset = presets.value.find((item) => item.id === presetId);
+  if (!preset?.auto_send_on_change || !preset.enabled || !props.connected || !canSendPreset(preset)) {
+    void flushPendingAutoSend();
+    return;
+  }
+  await sendPreset(preset);
+}
+
 async function sendPreset(preset: SendPreset): Promise<void> {
   sendingPresetId.value = preset.id;
   try {
@@ -291,6 +328,7 @@ async function sendPreset(preset: SendPreset): Promise<void> {
     emitError(error, "预设发送失败");
   } finally {
     sendingPresetId.value = null;
+    void flushPendingAutoSend();
   }
 }
 
@@ -322,6 +360,7 @@ function addPreset(): void {
     text_encoding: "utf-8",
     line_ending: "none",
     enabled: true,
+    auto_send_on_change: false,
     delay_ms: 50,
     updated_at: now,
   });
@@ -338,6 +377,7 @@ function updatePreset(id: string, changes: Partial<SendPresetDraft>): void {
 }
 
 function removePreset(preset: SendPreset): void {
+  pendingAutoSendPresetIds.delete(preset.id);
   presets.value = presets.value.filter((item) => item.id !== preset.id);
   schedulePresetSave();
 }
@@ -407,6 +447,70 @@ function persistEditor(): void {
 function schedulePresetSave(): void {
   if (presetSaveTimer !== undefined) window.clearTimeout(presetSaveTimer);
   presetSaveTimer = window.setTimeout(persistPresets, 180);
+}
+
+function schedulePresetPreviewRefresh(): void {
+  if (presetPreviewTimer !== undefined) window.clearTimeout(presetPreviewTimer);
+  presetPreviewTimer = window.setTimeout(refreshPresetPreviews, 100);
+}
+
+function refreshPresetPreviews(): void {
+  const activeIds = new Set<string>();
+  for (const preset of presets.value) {
+    const config = preset.frame_config;
+    if (preset.format !== "hex" || !config?.enabled) continue;
+    activeIds.add(preset.id);
+    const signature = JSON.stringify({ data: preset.data, frame_config: config });
+    if (presetPreviewSignatures.get(preset.id) === signature) continue;
+    presetPreviewSignatures.set(preset.id, signature);
+    const generation = (presetPreviewGenerations.get(preset.id) ?? 0) + 1;
+    presetPreviewGenerations.set(preset.id, generation);
+    presetFramePreviews.value = {
+      ...presetFramePreviews.value,
+      [preset.id]: { hex: "", error: "", loading: true },
+    };
+    void refreshPresetPreview(preset.id, preset.data, config, generation);
+  }
+
+  let changed = false;
+  const next = { ...presetFramePreviews.value };
+  for (const id of Object.keys(next)) {
+    if (activeIds.has(id)) continue;
+    delete next[id];
+    presetPreviewSignatures.delete(id);
+    presetPreviewGenerations.set(id, (presetPreviewGenerations.get(id) ?? 0) + 1);
+    changed = true;
+  }
+  if (changed) presetFramePreviews.value = next;
+}
+
+async function refreshPresetPreview(
+  presetId: string,
+  data: string,
+  config: HexFrameConfig,
+  generation: number,
+): Promise<void> {
+  try {
+    const result = await apiRequest<{ hex: string }>("/api/frame/preview", {
+      method: "POST",
+      body: JSON.stringify({ data, frame_config: config }),
+    });
+    if (presetPreviewGenerations.get(presetId) !== generation) return;
+    presetFramePreviews.value = {
+      ...presetFramePreviews.value,
+      [presetId]: { hex: result.hex, error: "", loading: false },
+    };
+  } catch (error) {
+    if (presetPreviewGenerations.get(presetId) !== generation) return;
+    presetFramePreviews.value = {
+      ...presetFramePreviews.value,
+      [presetId]: {
+        hex: "",
+        error: error instanceof Error ? error.message : "帧预览生成失败",
+        loading: false,
+      },
+    };
+  }
 }
 
 function persistPresets(): void {
@@ -498,6 +602,7 @@ function emitError(error: unknown, fallback: string): void {
       <VirtualLog :logs="logs" :display-hex="displayHex" :auto-scroll="autoScroll" />
       <SendPresetPanel
         :presets="presets"
+        :preset-frame-previews="presetFramePreviews"
         :connected="connected"
         :open="presetsOpen"
         :editor-locked="periodicStatus.active"
@@ -511,6 +616,7 @@ function emitError(error: unknown, fallback: string): void {
         @send="sendPreset"
         @edit-frame="openPresetFrameBuilder"
         @update-generated="updatePresetGeneratedField"
+        @commit-generated="commitPresetGeneratedField"
         @toggle-sequence="toggleSequence"
       />
     </div>

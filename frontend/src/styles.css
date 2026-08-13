@@ -198,6 +198,8 @@ h2 { margin: 2px 0 0; font-size: 16px; letter-spacing: 0; }
 .preset-cell-input { height: 30px; padding: 0 7px; border-radius: 2px; font-size: 10px; }
 .preset-name-input { font-family: inherit; }
 .preset-data-input { font-family: ui-monospace, Consolas, monospace; }
+.preset-data-input.frame-preview-value { color: var(--accent); background: var(--surface-soft); cursor: default; }
+.preset-data-input.frame-preview-value.error::placeholder { color: var(--danger); }
 .preset-format-controls { display: flex; align-items: center; gap: 4px; }
 .preset-format-controls select { width: 61px; height: 28px; padding: 0 4px; border-radius: 2px; font-size: 9px; }
 .preset-format-controls select:last-child { width: 68px; }
@@ -213,6 +215,8 @@ h2 { margin: 2px 0 0; font-size: 16px; letter-spacing: 0; }
 .preset-empty-row td { height: 120px; text-align: center; }
 .preset-empty-row button { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px; color: var(--accent); background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 3px; font-size: 10px; font-weight: 700; }
 .preset-generated-row td { height: auto; padding-block: 7px; background: var(--surface-soft); }
+.preset-generated-tools { min-height: 24px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 5px; }
+.preset-generated-tools > span { color: var(--muted); font-size: 9px; }
 
 .send-panel { padding: 12px 18px 16px; border-top: 1px solid var(--line); background: var(--surface); }
 .send-options { min-height: 32px; display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }

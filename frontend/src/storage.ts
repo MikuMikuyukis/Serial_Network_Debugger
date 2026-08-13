@@ -379,6 +379,7 @@ function normalizeSendPreset(value: unknown): SendPreset | null {
     text_encoding: preset.text_encoding!,
     line_ending: preset.line_ending!,
     enabled: typeof preset.enabled === "boolean" ? preset.enabled : true,
+    auto_send_on_change: typeof preset.auto_send_on_change === "boolean" ? preset.auto_send_on_change : false,
     delay_ms: isValidDelay(preset.delay_ms) ? preset.delay_ms : 50,
     updated_at: preset.updated_at!,
     ...(frameConfig ? { frame_config: frameConfig } : {}),

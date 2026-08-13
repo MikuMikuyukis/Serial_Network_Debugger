@@ -12,6 +12,7 @@ import FrameGeneratedControls from "./FrameGeneratedControls.vue";
 
 defineProps<{
   presets: SendPreset[];
+  presetFramePreviews: Record<string, { hex: string; error: string; loading: boolean }>;
   connected: boolean;
   open: boolean;
   editorLocked: boolean;
@@ -28,6 +29,7 @@ const emit = defineEmits<{
   send: [preset: SendPreset];
   "edit-frame": [preset: SendPreset];
   "update-generated": [presetId: string, fieldId: string, value: string];
+  "commit-generated": [presetId: string];
   "toggle-sequence": [];
 }>();
 
@@ -67,8 +69,26 @@ function numberValue(event: Event): number {
   return Number.isFinite(value) ? Math.min(86_400_000, Math.max(0, Math.round(value))) : 50;
 }
 
-function displayedPresetData(preset: SendPreset): string {
+function hasEnabledFrame(preset: SendPreset): boolean {
+  return preset.format === "hex" && Boolean(preset.frame_config?.enabled);
+}
+
+function displayedPresetData(
+  preset: SendPreset,
+  previews: Record<string, { hex: string; error: string; loading: boolean }>,
+): string {
+  if (hasEnabledFrame(preset)) return previews[preset.id]?.hex ?? "";
   return preset.format === "hex" ? formatHexDisplay(preset.data) : preset.data;
+}
+
+function presetDataPlaceholder(
+  preset: SendPreset,
+  previews: Record<string, { hex: string; error: string; loading: boolean }>,
+): string {
+  if (!hasEnabledFrame(preset)) return preset.format === "hex" ? "AA 55 01 00" : "输入发送内容";
+  const preview = previews[preset.id];
+  if (preview?.error) return preview.error;
+  return preview?.loading ? "正在生成完整帧..." : "完整帧为空";
 }
 
 function presetDataMaxlength(preset: SendPreset): number {
@@ -76,6 +96,7 @@ function presetDataMaxlength(preset: SendPreset): number {
 }
 
 function updatePresetData(preset: SendPreset, event: Event): void {
+  if (hasEnabledFrame(preset)) return;
   const target = event.target as HTMLInputElement;
   if (preset.format !== "hex") {
     emit("update", preset.id, { data: target.value });
@@ -91,7 +112,7 @@ function updatePresetData(preset: SendPreset, event: Event): void {
 }
 
 function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void {
-  if (preset.format !== "hex" || (event.key !== "Backspace" && event.key !== "Delete")) return;
+  if (hasEnabledFrame(preset) || preset.format !== "hex" || (event.key !== "Backspace" && event.key !== "Delete")) return;
 
   const target = event.target as HTMLInputElement;
   if (target.selectionStart === null || target.selectionEnd === null) return;
@@ -177,10 +198,12 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
             <td>
               <input
                 class="preset-cell-input preset-data-input"
-                :value="displayedPresetData(preset)"
+                :class="{ 'frame-preview-value': hasEnabledFrame(preset), error: presetFramePreviews[preset.id]?.error }"
+                :value="displayedPresetData(preset, presetFramePreviews)"
                 :maxlength="presetDataMaxlength(preset)"
-                :placeholder="preset.format === 'hex' ? 'AA 55 01 00' : '输入发送内容'"
-                title="发送内容"
+                :placeholder="presetDataPlaceholder(preset, presetFramePreviews)"
+                :title="hasEnabledFrame(preset) ? (presetFramePreviews[preset.id]?.error || '当前完整组包内容') : '发送内容'"
+                :readonly="hasEnabledFrame(preset)"
                 @input="updatePresetData(preset, $event)"
                 @keydown="handlePresetDataKeydown(preset, $event)"
               />
@@ -279,11 +302,23 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
           <tr v-if="hasGeneratedControls(preset)" class="preset-generated-row" :class="{ disabled: !preset.enabled }">
             <td></td>
             <td colspan="5">
+              <div class="preset-generated-tools">
+                <label class="toggle" title="生成控件操作完成后自动发送一次">
+                  <input
+                    type="checkbox"
+                    :checked="preset.auto_send_on_change"
+                    @change="emit('update', preset.id, { auto_send_on_change: checkedValue($event) })"
+                  />
+                  <span>帧变化自动发送</span>
+                </label>
+                <span v-if="preset.auto_send_on_change && !connected">等待连接</span>
+              </div>
               <FrameGeneratedControls
                 :config="preset.frame_config"
                 :disabled="editorLocked || !preset.enabled"
                 compact
                 @update="(fieldId, value) => emit('update-generated', preset.id, fieldId, value)"
+                @commit="() => emit('commit-generated', preset.id)"
               />
             </td>
           </tr>

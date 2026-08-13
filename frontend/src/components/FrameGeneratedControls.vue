@@ -10,6 +10,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   update: [fieldId: string, value: string];
+  commit: [fieldId: string, value: string];
 }>();
 
 const fields = computed(() => (props.config?.enabled ? props.config.fields.filter(
@@ -26,6 +27,17 @@ function updateNumber(field: HexFrameDataField, event: Event): void {
   emit("update", field.id, value);
 }
 
+function commitNumber(field: HexFrameDataField, event: Event): void {
+  const value = (event.target as HTMLInputElement).value;
+  emit("update", field.id, value);
+  emit("commit", field.id, value);
+}
+
+function updateAndCommit(field: HexFrameDataField, value: string): void {
+  emit("update", field.id, value);
+  emit("commit", field.id, value);
+}
+
 function bitChecked(field: HexFrameDataField, bit: number): boolean {
   return (integerValue(field) & (1n << BigInt(bit))) !== 0n;
 }
@@ -33,11 +45,11 @@ function bitChecked(field: HexFrameDataField, bit: number): boolean {
 function toggleBit(field: HexFrameDataField, bit: number, checked: boolean): void {
   const mask = 1n << BigInt(bit);
   const value = checked ? integerValue(field) | mask : integerValue(field) & ~mask;
-  emit("update", field.id, value.toString());
+  updateAndCommit(field, value.toString());
 }
 
 function selectBit(field: HexFrameDataField, bit: number): void {
-  emit("update", field.id, (1n << BigInt(bit)).toString());
+  updateAndCommit(field, (1n << BigInt(bit)).toString());
 }
 
 function byteEnabled(field: HexFrameDataField, byteIndex: number): boolean {
@@ -49,7 +61,7 @@ function toggleByte(field: HexFrameDataField, byteIndex: number, checked: boolea
   const shift = byteShift(field, byteIndex);
   const mask = 0xffn << shift;
   const value = checked ? integerValue(field) | mask : integerValue(field) & ~mask;
-  emit("update", field.id, value.toString());
+  updateAndCommit(field, value.toString());
 }
 
 function byteShift(field: HexFrameDataField, byteIndex: number): bigint {
@@ -102,6 +114,7 @@ function enumOptions(field: HexFrameDataField): Array<{ label: string; value: st
             :value="numericValue(field)"
             :disabled="disabled"
             @input="updateNumber(field, $event)"
+            @change="commitNumber(field, $event)"
           />
           <input
             class="generated-number-input"
@@ -111,7 +124,8 @@ function enumOptions(field: HexFrameDataField): Array<{ label: string; value: st
             :step="field.generator.step"
             :value="numericValue(field)"
             :disabled="disabled"
-            @change="updateNumber(field, $event)"
+            @input="updateNumber(field, $event)"
+            @change="commitNumber(field, $event)"
           />
         </div>
       </template>
@@ -128,7 +142,7 @@ function enumOptions(field: HexFrameDataField): Array<{ label: string; value: st
         <label v-for="byte in (field.byte_length ?? 1)" :key="byte"><input type="checkbox" :checked="byteEnabled(field, byte - 1)" :disabled="disabled" @change="toggleByte(field, byte - 1, ($event.target as HTMLInputElement).checked)" /><span>Byte {{ byte }}</span></label>
       </div>
 
-      <select v-else-if="field.generator?.control === 'enum'" :value="field.value" :disabled="disabled" @change="emit('update', field.id, ($event.target as HTMLSelectElement).value)">
+      <select v-else-if="field.generator?.control === 'enum'" :value="field.value" :disabled="disabled" @change="updateAndCommit(field, ($event.target as HTMLSelectElement).value)">
         <option v-for="option in enumOptions(field)" :key="`${option.label}-${option.value}`" :value="option.value">{{ option.label }}</option>
       </select>
     </div>
