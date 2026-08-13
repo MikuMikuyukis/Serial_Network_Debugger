@@ -3,6 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Eraser, PanelRight, Pause, Play, Repeat, Send, Square } from "@lucide/vue";
 import { apiRequest } from "../api";
 import {
+  compactHexDisplay,
+  deleteAcrossHexDisplaySpace,
+  formatHexDisplay,
+  hexDisplayCaret,
+} from "../hex-display";
+import {
   loadSendEditor,
   loadSendPresets,
   MAX_SEND_PRESETS,
@@ -55,6 +61,12 @@ let sequenceGeneration = 0;
 let editorSaveTimer: number | undefined;
 let presetSaveTimer: number | undefined;
 const placeholder = computed(() => format.value === "hex" ? "AA 55 01 00" : "输入发送内容");
+const displayedSendData = computed(() => (
+  format.value === "hex" ? formatHexDisplay(sendData.value) : sendData.value
+));
+const sendDataMaxlength = computed(() => (
+  format.value === "hex" ? 1_572_863 : 1_048_576
+));
 const editorPayload = computed<SendPayload>(() => ({
   data: sendData.value,
   format: format.value,
@@ -126,6 +138,41 @@ function handleSendShortcut(event: KeyboardEvent): void {
   if (event.key !== "Enter" || !event.ctrlKey) return;
   event.preventDefault();
   if (props.connected && !sending.value) void send();
+}
+
+function handleSendEditorKeydown(event: KeyboardEvent): void {
+  handleSendShortcut(event);
+  if (event.defaultPrevented || format.value !== "hex") return;
+  if (event.key !== "Backspace" && event.key !== "Delete") return;
+
+  const target = event.target as HTMLTextAreaElement;
+  if (target.selectionStart !== target.selectionEnd) return;
+  const edit = deleteAcrossHexDisplaySpace(
+    target.value,
+    target.selectionStart,
+    event.key === "Backspace" ? "backward" : "forward",
+  );
+  if (!edit) return;
+
+  event.preventDefault();
+  sendData.value = edit.value;
+  target.value = formatHexDisplay(edit.value);
+  target.setSelectionRange(edit.caret, edit.caret);
+}
+
+function updateSendData(event: Event): void {
+  const target = event.target as HTMLTextAreaElement;
+  if (format.value !== "hex") {
+    sendData.value = target.value;
+    return;
+  }
+
+  const rawOffset = compactHexDisplay(target.value.slice(0, target.selectionStart)).length;
+  const compactValue = compactHexDisplay(target.value);
+  target.value = formatHexDisplay(compactValue);
+  sendData.value = compactValue;
+  const caret = hexDisplayCaret(rawOffset, compactValue.length);
+  target.setSelectionRange(caret, caret);
 }
 
 function loadPreset(preset: SendPreset): void {
@@ -378,12 +425,13 @@ function emitError(error: unknown, fallback: string): void {
       </div>
       <div class="send-row">
         <textarea
-          v-model="sendData"
+          :value="displayedSendData"
           rows="3"
-          maxlength="1048576"
+          :maxlength="sendDataMaxlength"
           :placeholder="placeholder"
           :disabled="periodicStatus.active"
-          @keydown="handleSendShortcut"
+          @input="updateSendData"
+          @keydown="handleSendEditorKeydown"
         ></textarea>
         <button class="button button-send" type="submit" :disabled="sending || !connected || !sendData.length">
           <Send :size="17" />
