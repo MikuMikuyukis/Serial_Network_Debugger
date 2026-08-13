@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Activity, Eraser, List, PanelRight, Pause, Play, Repeat, Send, Settings, Square } from "@lucide/vue";
+import { Eraser, ExternalLink, Gauge, List, PanelRight, Pause, Play, Repeat, Send, Settings, Square, X } from "@lucide/vue";
 import { apiRequest } from "../api";
 import {
   compactHexDisplay,
@@ -11,6 +11,7 @@ import {
 } from "../hex-display";
 import {
   DEFAULT_HEX_FRAME_CONFIG,
+  hexFrameStorageKey,
   loadSendEditor,
   loadHexFrameConfig,
   loadSendPresets,
@@ -18,6 +19,8 @@ import {
   saveSendEditor,
   saveHexFrameConfig,
   saveSendPresets,
+  sendEditorStorageKey,
+  sendPresetsStorageKey,
 } from "../storage";
 import type {
   DataFormat,
@@ -45,6 +48,7 @@ const props = defineProps<{
   receivedFrames: ReceivedFrame[];
   paused: boolean;
   periodicStatus: PeriodicSendStatus;
+  toolOnly?: "presets";
 }>();
 
 const emit = defineEmits<{
@@ -52,11 +56,14 @@ const emit = defineEmits<{
   clear: [];
   "update:paused": [paused: boolean];
   "periodic-status": [status: PeriodicSendStatus];
+  "close-tool": [];
 }>();
 
 const displayHex = ref(false);
 const autoScroll = ref(true);
-const workspaceView = ref<"logs" | "analysis">("logs");
+const activeTool = ref<"presets" | "dashboard" | "parser">("presets");
+const analyzerView = ref<"dashboard" | "parser">("dashboard");
+const toolPanelOpen = ref(true);
 const storedEditor = loadSendEditor(props.profileId);
 const format = ref<DataFormat>(storedEditor.format);
 const textEncoding = ref<TextEncoding>(storedEditor.text_encoding);
@@ -71,7 +78,6 @@ const sending = ref(false);
 const changingPeriodic = ref(false);
 const presets = ref<SendPreset[]>(loadSendPresets(props.profileId));
 const presetFramePreviews = ref<Record<string, { hex: string; error: string; loading: boolean }>>({});
-const presetsOpen = ref(true);
 const sendingPresetId = ref<string | null>(null);
 const sequenceRunning = ref(false);
 let sequenceGeneration = 0;
@@ -123,15 +129,64 @@ watch(
   schedulePresetPreviewRefresh,
   { deep: true, immediate: true },
 );
-onMounted(() => window.addEventListener("beforeunload", persistPendingState));
+onMounted(() => {
+  window.addEventListener("beforeunload", persistPendingState);
+  window.addEventListener("storage", handleStorageChange);
+});
 onBeforeUnmount(() => {
   sequenceGeneration += 1;
   window.removeEventListener("beforeunload", persistPendingState);
+  window.removeEventListener("storage", handleStorageChange);
   persistPendingState();
   if (editorSaveTimer !== undefined) window.clearTimeout(editorSaveTimer);
   if (presetSaveTimer !== undefined) window.clearTimeout(presetSaveTimer);
   if (presetPreviewTimer !== undefined) window.clearTimeout(presetPreviewTimer);
 });
+
+function selectTool(tool: "presets" | "dashboard" | "parser"): void {
+  activeTool.value = tool;
+  if (tool === "dashboard" || tool === "parser") analyzerView.value = tool;
+  toolPanelOpen.value = true;
+}
+
+function openDetachedTool(tool = activeTool.value): void {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.searchParams.set("tool", tool);
+  url.searchParams.set("profile", props.profileId);
+  const popup = window.open(
+    url,
+    `snd-${tool}-${props.profileId}`,
+    tool === "parser" ? "popup,width=1040,height=760" : "popup,width=900,height=680",
+  );
+  if (!popup) {
+    emit("error", "独立窗口被浏览器拦截，请允许此站点打开弹出式窗口");
+    return;
+  }
+  popup.focus();
+  if (!props.toolOnly) toolPanelOpen.value = false;
+}
+
+function handleStorageChange(event: StorageEvent): void {
+  if (event.storageArea !== localStorage) return;
+  if (event.key === sendPresetsStorageKey(props.profileId)) {
+    const storedPresets = loadSendPresets(props.profileId);
+    if (JSON.stringify(storedPresets) !== JSON.stringify(presets.value)) presets.value = storedPresets;
+    return;
+  }
+  if (event.key === sendEditorStorageKey(props.profileId)) {
+    const editor = loadSendEditor(props.profileId);
+    sendData.value = editor.data;
+    format.value = editor.format;
+    textEncoding.value = editor.text_encoding;
+    lineEnding.value = editor.line_ending;
+    intervalMs.value = editor.interval_ms;
+    return;
+  }
+  if (event.key === hexFrameStorageKey(props.profileId)) {
+    frameConfig.value = loadHexFrameConfig(props.profileId);
+  }
+}
 
 async function sendPayload(payload: SendPayload): Promise<Record<string, string> | null> {
   const response = await apiRequest<{
@@ -606,32 +661,30 @@ function emitError(error: unknown, fallback: string): void {
 </script>
 
 <template>
-    <section class="console-area">
-      <div class="console-toolbar">
-        <div class="console-view-heading">
-          <span class="eyebrow">WORKSPACE</span>
-          <div class="console-view-tabs" role="tablist" aria-label="工作视图">
-            <button type="button" :class="{ active: workspaceView === 'logs' }" @click="workspaceView = 'logs'"><List :size="15" />通信日志</button>
-            <button type="button" :class="{ active: workspaceView === 'analysis' }" @click="workspaceView = 'analysis'"><Activity :size="15" />数据分析</button>
-          </div>
-        </div>
+    <section class="console-area" :class="{ 'tool-only-console': toolOnly }">
+      <div v-if="toolOnly === 'presets'" class="detached-tool-header">
+        <div><span class="eyebrow">TOOL WINDOW</span><strong>发送预设</strong></div>
+        <button class="icon-tool-button" type="button" title="关闭窗口" aria-label="关闭窗口" @click="emit('close-tool')"><X :size="16" /></button>
+      </div>
+
+      <div v-if="!toolOnly" class="console-toolbar">
+        <div class="console-view-heading"><span class="eyebrow">RECEIVE</span><strong><List :size="15" />通信日志</strong></div>
         <div class="toolbar-actions">
-          <label v-if="workspaceView === 'logs'" class="toggle">
+          <label class="toggle">
             <input v-model="displayHex" type="checkbox" />
             <span>HEX 显示</span>
           </label>
-          <label v-if="workspaceView === 'logs'" class="toggle">
+          <label class="toggle">
             <input v-model="autoScroll" type="checkbox" />
             <span>自动滚动</span>
         </label>
         <button
-          v-if="workspaceView === 'logs'"
           class="icon-tool-button"
-          :class="{ active: presetsOpen }"
+          :class="{ active: toolPanelOpen }"
           type="button"
-          :title="presetsOpen ? '关闭发送预设' : '打开发送预设'"
-          :aria-label="presetsOpen ? '关闭发送预设' : '打开发送预设'"
-          @click="presetsOpen = !presetsOpen"
+          :title="toolPanelOpen ? '关闭工具面板' : '打开工具面板'"
+          :aria-label="toolPanelOpen ? '关闭工具面板' : '打开工具面板'"
+          @click="toolPanelOpen = !toolPanelOpen"
         >
           <PanelRight :size="16" />
         </button>
@@ -645,24 +698,71 @@ function emitError(error: unknown, fallback: string): void {
           <Play v-if="paused" :size="16" />
           <Pause v-else :size="16" />
         </button>
-        <button v-if="workspaceView === 'logs'" class="icon-tool-button" type="button" title="清空日志" aria-label="清空日志" @click="emit('clear')">
+        <button class="icon-tool-button" type="button" title="清空日志" aria-label="清空日志" @click="emit('clear')">
           <Eraser :size="16" />
         </button>
       </div>
     </div>
 
-    <div class="traffic-workspace" :class="{ 'presets-open': presetsOpen }">
-      <VirtualLog v-show="workspaceView === 'logs'" :logs="logs" :display-hex="displayHex" :auto-scroll="autoScroll" />
-      <FrameAnalyzer v-show="workspaceView === 'analysis'" :profile-id="profileId" :frames="receivedFrames" @error="emit('error', $event)" />
+    <div v-if="!toolOnly" class="traffic-workspace" :class="{ 'tool-panel-open': toolPanelOpen }">
+      <VirtualLog :logs="logs" :display-hex="displayHex" :auto-scroll="autoScroll" />
+      <aside v-show="toolPanelOpen" class="workspace-tool-panel">
+        <header class="workspace-tool-tabs">
+          <div role="tablist" aria-label="工具面板">
+            <button type="button" :class="{ active: activeTool === 'presets' }" @click="selectTool('presets')"><List :size="13" />发送预设</button>
+            <button type="button" :class="{ active: activeTool === 'dashboard' }" @click="selectTool('dashboard')"><Gauge :size="13" />仪表盘</button>
+            <button type="button" :class="{ active: activeTool === 'parser' }" @click="selectTool('parser')"><Settings :size="13" />解析配置</button>
+          </div>
+          <div>
+            <button class="icon-tool-button" type="button" title="拆分到独立窗口" aria-label="拆分当前工具到独立窗口" @click="openDetachedTool()"><ExternalLink :size="14" /></button>
+            <button class="icon-tool-button" type="button" title="关闭工具面板" aria-label="关闭工具面板" @click="toolPanelOpen = false"><X :size="14" /></button>
+          </div>
+        </header>
+        <SendPresetPanel
+          v-show="activeTool === 'presets'"
+          :presets="presets"
+          :preset-frame-previews="presetFramePreviews"
+          :connected="connected"
+          open
+          :editor-locked="periodicStatus.active"
+          :sending-preset-id="sendingPresetId"
+          :sequence-running="sequenceRunning"
+          :closable="false"
+          @close="toolPanelOpen = false"
+          @add="addPreset"
+          @update="updatePreset"
+          @duplicate="duplicatePreset"
+          @reorder="reorderPreset"
+          @remove="removePreset"
+          @load="loadPreset"
+          @send="sendPreset"
+          @edit-frame="openPresetFrameBuilder"
+          @update-generated="updatePresetGeneratedField"
+          @commit-generated="commitPresetGeneratedField"
+          @toggle-sequence="toggleSequence"
+        />
+        <FrameAnalyzer
+          v-show="activeTool === 'dashboard' || activeTool === 'parser'"
+          :profile-id="profileId"
+          :frames="receivedFrames"
+          :view="analyzerView"
+          @request-view="selectTool"
+          @error="emit('error', $event)"
+        />
+      </aside>
+    </div>
+
+    <div v-else class="detached-preset-content">
       <SendPresetPanel
         :presets="presets"
         :preset-frame-previews="presetFramePreviews"
         :connected="connected"
-        :open="presetsOpen"
+        open
         :editor-locked="periodicStatus.active"
         :sending-preset-id="sendingPresetId"
         :sequence-running="sequenceRunning"
-        @close="presetsOpen = false"
+        :closable="false"
+        @close="emit('close-tool')"
         @add="addPreset"
         @update="updatePreset"
         @duplicate="duplicatePreset"
@@ -677,7 +777,7 @@ function emitError(error: unknown, fallback: string): void {
       />
     </div>
 
-    <form class="send-panel" @submit.prevent="send">
+    <form v-if="!toolOnly" class="send-panel" @submit.prevent="send">
       <div class="send-options">
         <div class="segmented" aria-label="发送格式">
           <label><input v-model="format" type="radio" value="text" :disabled="periodicStatus.active" /><span>文本</span></label>

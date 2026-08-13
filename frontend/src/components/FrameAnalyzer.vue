@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { Activity, Gauge, Plus, Settings, Trash2, X } from "@lucide/vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { Activity, Gauge, Plus, RotateCcw, Save, Settings, Trash2 } from "@lucide/vue";
 import { MAX_FRAME_PARSER_FIELDS, parseReceivedFrame, validateFrameParserConfig } from "../frame-parser";
-import { loadFrameParserConfig, saveFrameParserConfig } from "../storage";
+import { frameParserStorageKey, loadFrameParserConfig, saveFrameParserConfig } from "../storage";
 import type {
   FrameParserConfig,
   FrameParserDataType,
@@ -15,10 +15,12 @@ import type {
 const props = defineProps<{
   profileId: string;
   frames: ReceivedFrame[];
+  view: "dashboard" | "parser";
 }>();
 
 const emit = defineEmits<{
   error: [message: string];
+  "request-view": [view: "dashboard" | "parser"];
 }>();
 
 interface HistoryPoint {
@@ -30,7 +32,6 @@ const storedConfig = loadFrameParserConfig(props.profileId);
 const config = ref<FrameParserConfig>(storedConfig);
 const draft = ref<FrameParserConfig>(cloneParserConfig(storedConfig));
 const selectedFieldId = ref<string | null>(draft.value.fields[0]?.id ?? null);
-const dialogOpen = ref(false);
 const latestValues = ref<Record<string, ParsedFieldValue>>({});
 const histories = ref<Record<string, HistoryPoint[]>>({});
 const matchedCount = ref(0);
@@ -50,6 +51,13 @@ watch(
   () => processPendingFrames(),
   { immediate: true },
 );
+
+watch(() => props.view, (view) => {
+  if (view === "parser") resetDraft();
+});
+
+onMounted(() => window.addEventListener("storage", handleStorageChange));
+onBeforeUnmount(() => window.removeEventListener("storage", handleStorageChange));
 
 function processPendingFrames(): void {
   const pending = props.frames.filter((frame) => frame.id > lastFrameId);
@@ -100,10 +108,9 @@ function processPendingFrames(): void {
   }
 }
 
-function openSettings(): void {
+function resetDraft(): void {
   draft.value = cloneParserConfig(config.value);
   selectedFieldId.value = draft.value.fields[0]?.id ?? null;
-  dialogOpen.value = true;
 }
 
 function applySettings(): void {
@@ -121,10 +128,16 @@ function applySettings(): void {
     matchedCount.value = 0;
     unmatchedCount.value = 0;
     errorCount.value = 0;
-    dialogOpen.value = false;
   } catch {
     emit("error", "解析配置保存失败，请检查浏览器本地存储空间");
   }
+}
+
+function handleStorageChange(event: StorageEvent): void {
+  if (event.storageArea !== localStorage || event.key !== frameParserStorageKey(props.profileId)) return;
+  config.value = loadFrameParserConfig(props.profileId);
+  if (props.view === "parser") resetDraft();
+  clearAnalysis();
 }
 
 function addField(dataType: FrameParserDataType): void {
@@ -291,7 +304,7 @@ function cloneParserConfig(value: FrameParserConfig): FrameParserConfig {
 </script>
 
 <template>
-  <section class="analyzer-workspace">
+  <section v-if="view === 'dashboard'" class="analyzer-workspace">
     <header class="analyzer-header">
       <div class="analyzer-title">
         <span class="analyzer-state" :class="{ active: config.enabled }"><Activity :size="14" /></span>
@@ -305,14 +318,14 @@ function cloneParserConfig(value: FrameParserConfig): FrameParserConfig {
         <span><small>未匹配</small>{{ unmatchedCount }}</span>
         <span :class="{ error: errorCount > 0 }"><small>错误</small>{{ errorCount }}</span>
         <button class="analyzer-clear-button" type="button" @click="clearAnalysis">清空数据</button>
-        <button class="frame-config-button" type="button" @click="openSettings"><Settings :size="14" />解析配置</button>
+        <button class="frame-config-button" type="button" @click="emit('request-view', 'parser')"><Settings :size="14" />解析配置</button>
       </div>
     </header>
 
     <div v-if="!config.enabled || config.fields.length === 0" class="analyzer-empty">
       <Activity :size="34" />
       <strong>{{ config.fields.length === 0 ? "尚未配置接收字段" : "接收帧解析已停用" }}</strong>
-      <button type="button" @click="openSettings"><Settings :size="15" />配置解析格式</button>
+      <button type="button" @click="emit('request-view', 'parser')"><Settings :size="15" />配置解析格式</button>
     </div>
 
     <div v-else class="analyzer-scroll">
@@ -363,15 +376,17 @@ function cloneParserConfig(value: FrameParserConfig): FrameParserConfig {
     </div>
   </section>
 
-  <Teleport to="body">
-    <div v-if="dialogOpen" class="modal-backdrop" @mousedown.self="dialogOpen = false">
-      <section class="frame-builder-dialog parser-dialog" role="dialog" aria-modal="true" aria-labelledby="parser-title">
-        <header class="dialog-header">
-          <div><span class="eyebrow">RX FRAME PARSER</span><h2 id="parser-title">接收帧解析格式</h2></div>
-          <button class="bar-icon-button" type="button" title="关闭" aria-label="关闭解析配置" @click="dialogOpen = false"><X :size="18" /></button>
-        </header>
+  <section v-else class="parser-workspace">
+    <header class="parser-workspace-header">
+      <div><span class="eyebrow">RX FRAME PARSER</span><strong>接收帧解析格式</strong></div>
+      <div>
+        <span>{{ draft.fields.length }} / {{ MAX_FRAME_PARSER_FIELDS }} 字段</span>
+        <button class="frame-config-button" type="button" @click="resetDraft"><RotateCcw :size="14" />撤销修改</button>
+        <button class="dialog-button primary" type="button" @click="applySettings"><Save :size="14" />应用配置</button>
+      </div>
+    </header>
 
-        <div class="parser-content">
+    <div class="parser-content">
           <div class="parser-general">
             <label class="settings-toggle"><input v-model="draft.enabled" type="checkbox" /><span>启用接收帧解析</span></label>
             <label class="field"><span>方案名称</span><input v-model="draft.name" maxlength="60" /></label>
@@ -434,14 +449,6 @@ function cloneParserConfig(value: FrameParserConfig): FrameParserConfig {
             </div>
             <div v-else class="parser-properties-empty"><Gauge :size="32" /><span>选择字段后配置提取规则和仪表样式</span></div>
           </div>
-        </div>
-
-        <footer class="dialog-footer">
-          <span class="parser-field-count">{{ draft.fields.length }} / {{ MAX_FRAME_PARSER_FIELDS }} 字段</span>
-          <button class="dialog-button secondary" type="button" @click="dialogOpen = false">取消</button>
-          <button class="dialog-button primary" type="button" @click="applySettings">应用解析配置</button>
-        </footer>
-      </section>
     </div>
-  </Teleport>
+  </section>
 </template>

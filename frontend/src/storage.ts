@@ -37,7 +37,7 @@ const THEME_KEY = "snd.theme";
 const SEND_PRESETS_KEY = "snd.send-presets.v1";
 const SEND_EDITOR_KEY = "snd.send-editor.v1";
 const HEX_FRAME_CONFIG_KEY = "snd.hex-frame-config.v1";
-const FRAME_PARSER_CONFIG_KEY = "snd.frame-parser-config.v1";
+export const FRAME_PARSER_CONFIG_KEY = "snd.frame-parser-config.v1";
 const PROFILES_KEY = "snd.configuration-profiles.v1";
 const ACTIVE_PROFILE_KEY = "snd.active-configuration-profile.v1";
 const DEFAULT_PROFILE_ID = "default";
@@ -233,6 +233,10 @@ export function saveSendPresets(presets: SendPreset[], profileId = DEFAULT_PROFI
   localStorage.setItem(profileStorageKey(SEND_PRESETS_KEY, profileId), JSON.stringify(presets.slice(0, MAX_SEND_PRESETS)));
 }
 
+export function sendPresetsStorageKey(profileId = DEFAULT_PROFILE_ID): string {
+  return profileStorageKey(SEND_PRESETS_KEY, profileId);
+}
+
 export function loadSendEditor(profileId = DEFAULT_PROFILE_ID): SendEditorDraft {
   try {
     const stored = JSON.parse(readProfileItem(SEND_EDITOR_KEY, profileId) ?? "null") as Partial<SendEditorDraft> | null;
@@ -260,6 +264,10 @@ export function saveSendEditor(editor: SendEditorDraft, profileId = DEFAULT_PROF
   localStorage.setItem(profileStorageKey(SEND_EDITOR_KEY, profileId), JSON.stringify(editor));
 }
 
+export function sendEditorStorageKey(profileId = DEFAULT_PROFILE_ID): string {
+  return profileStorageKey(SEND_EDITOR_KEY, profileId);
+}
+
 export function loadHexFrameConfig(profileId = DEFAULT_PROFILE_ID): HexFrameConfig {
   try {
     const stored = JSON.parse(readProfileItem(HEX_FRAME_CONFIG_KEY, profileId) ?? "null") as unknown;
@@ -273,6 +281,10 @@ export function saveHexFrameConfig(config: HexFrameConfig, profileId = DEFAULT_P
   localStorage.setItem(profileStorageKey(HEX_FRAME_CONFIG_KEY, profileId), JSON.stringify(config));
 }
 
+export function hexFrameStorageKey(profileId = DEFAULT_PROFILE_ID): string {
+  return profileStorageKey(HEX_FRAME_CONFIG_KEY, profileId);
+}
+
 export function loadFrameParserConfig(profileId = DEFAULT_PROFILE_ID): FrameParserConfig {
   try {
     const stored = JSON.parse(readProfileItem(FRAME_PARSER_CONFIG_KEY, profileId) ?? "null") as unknown;
@@ -284,6 +296,10 @@ export function loadFrameParserConfig(profileId = DEFAULT_PROFILE_ID): FramePars
 
 export function saveFrameParserConfig(config: FrameParserConfig, profileId = DEFAULT_PROFILE_ID): void {
   localStorage.setItem(profileStorageKey(FRAME_PARSER_CONFIG_KEY, profileId), JSON.stringify(config));
+}
+
+export function frameParserStorageKey(profileId = DEFAULT_PROFILE_ID): string {
+  return profileStorageKey(FRAME_PARSER_CONFIG_KEY, profileId);
 }
 
 function profileStorageKey(baseKey: string, profileId: string): string {

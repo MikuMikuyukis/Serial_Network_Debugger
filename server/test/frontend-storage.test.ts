@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   copyConfigurationProfileData,
+  frameParserStorageKey,
+  hexFrameStorageKey,
   loadActiveProfileId,
   loadConfigurationProfiles,
   loadHexFrameConfig,
@@ -15,6 +17,8 @@ import {
   saveSendEditor,
   saveSendPresets,
   saveTransportSettings,
+  sendEditorStorageKey,
+  sendPresetsStorageKey,
 } from "../../frontend/src/storage.js";
 import type { HexFrameConfig, SendPreset } from "../../frontend/src/types.js";
 
@@ -75,6 +79,14 @@ describe("frontend configuration profile storage", () => {
     expect(loadSendEditor("second").data).toBe("SECOND");
     expect(loadSendPresets("first")[0]?.id).toBe("first-preset");
     expect(loadSendPresets("second")[0]?.id).toBe("second-preset");
+  });
+
+  it("为多窗口同步生成按配置隔离的存储键", () => {
+    expect(sendPresetsStorageKey("first")).toBe("snd.profile.first.send-presets.v1");
+    expect(sendEditorStorageKey("first")).toBe("snd.profile.first.send-editor.v1");
+    expect(hexFrameStorageKey("first")).toBe("snd.profile.first.hex-frame-config.v1");
+    expect(frameParserStorageKey("first")).toBe("snd.profile.first.frame-parser-config.v1");
+    expect(frameParserStorageKey("first")).not.toBe(frameParserStorageKey("second"));
   });
 
   it("复制配置时为预设和 HEX 帧生成独立标识", () => {

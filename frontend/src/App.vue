@@ -4,6 +4,7 @@ import { Cable, Moon, Sun } from "@lucide/vue";
 import { apiRequest } from "./api";
 import ConnectionBar from "./components/ConnectionBar.vue";
 import ConfigurationProfiles from "./components/ConfigurationProfiles.vue";
+import FrameAnalyzer from "./components/FrameAnalyzer.vue";
 import ToastStack, { type ToastMessage } from "./components/ToastStack.vue";
 import TrafficConsole from "./components/TrafficConsole.vue";
 import { useCommunication } from "./composables/useCommunication";
@@ -12,7 +13,13 @@ import type { PeriodicSendStatus, TransportStatus } from "./types";
 
 const toasts = ref<ToastMessage[]>([]);
 const theme = ref<Theme>(loadTheme());
-const activeProfileId = ref(loadActiveProfileId());
+const query = new URLSearchParams(window.location.search);
+const requestedTool = query.get("tool");
+const detachedTool = ref<"presets" | "dashboard" | "parser" | null>(
+  requestedTool === "presets" || requestedTool === "dashboard" || requestedTool === "parser" ? requestedTool : null,
+);
+const requestedProfileId = query.get("profile");
+const activeProfileId = ref(requestedProfileId?.slice(0, 80) || loadActiveProfileId());
 const trafficConsole = ref<InstanceType<typeof TrafficConsole> | null>(null);
 let nextToastId = 1;
 
@@ -52,7 +59,23 @@ function persistActiveProfile(): void {
   trafficConsole.value?.persistPendingState();
 }
 
+function switchDetachedAnalyzer(view: "dashboard" | "parser"): void {
+  detachedTool.value = view;
+  const url = new URL(window.location.href);
+  url.searchParams.set("tool", view);
+  window.history.replaceState(null, "", url);
+  document.title = `${view === "dashboard" ? "实时仪表盘" : "解析配置"} - Serial Network Debugger`;
+}
+
+function closeDetachedWindow(): void {
+  window.close();
+}
+
 onMounted(async () => {
+  if (detachedTool.value) {
+    const titles = { presets: "发送预设", dashboard: "实时仪表盘", parser: "解析配置" };
+    document.title = `${titles[detachedTool.value]} - Serial Network Debugger`;
+  }
   try {
     applyStatus(await apiRequest<TransportStatus>("/api/status"));
     applyPeriodicStatus(await apiRequest<PeriodicSendStatus>("/api/periodic-send"));
@@ -63,7 +86,31 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div v-if="detachedTool" class="detached-tool-shell">
+    <FrameAnalyzer
+      v-if="detachedTool === 'dashboard' || detachedTool === 'parser'"
+      :profile-id="activeProfileId"
+      :frames="receivedFrames"
+      :view="detachedTool"
+      @request-view="switchDetachedAnalyzer"
+      @error="showToast"
+    />
+    <TrafficConsole
+      v-else
+      ref="trafficConsole"
+      :profile-id="activeProfileId"
+      v-model:paused="paused"
+      :connected="status.connected"
+      :logs="logs"
+      :received-frames="receivedFrames"
+      :periodic-status="periodicStatus"
+      tool-only="presets"
+      @close-tool="closeDetachedWindow"
+      @error="showToast"
+      @periodic-status="applyPeriodicStatus"
+    />
+  </div>
+  <div v-else class="app-shell">
     <header class="topbar">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"><Cable :size="21" /></span>

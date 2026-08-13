@@ -19,6 +19,7 @@ defineProps<{
   editorLocked: boolean;
   sendingPresetId: string | null;
   sequenceRunning: boolean;
+  closable?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -194,7 +195,7 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
           <Plus :size="15" />
           <span>添加</span>
         </button>
-        <button class="icon-tool-button" type="button" title="关闭预设列表" aria-label="关闭预设列表" @click="emit('close')">
+        <button v-if="closable !== false" class="icon-tool-button" type="button" title="关闭预设列表" aria-label="关闭预设列表" @click="emit('close')">
           <X :size="16" />
         </button>
       </div>
