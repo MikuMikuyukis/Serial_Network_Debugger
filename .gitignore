@@ -2,6 +2,8 @@
 node_modules/
 .vite/
 server/dist/
+desktop/dist/
+release/
 coverage/
 
 # Legacy local Python environment (no longer used by the project)

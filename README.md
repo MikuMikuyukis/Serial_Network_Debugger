@@ -71,6 +71,24 @@ npm start
 
 浏览器打开 <http://127.0.0.1:8765>。
 
+## Electron 桌面版
+
+桌面版会在 Electron 主进程中启动现有 Node.js 服务，并使用随机本地端口加载界面。串口、TCP、UDP、周期发送和浏览器版使用同一套后端实现，不需要另外启动服务。
+
+开发机直接启动桌面版：
+
+```powershell
+npm run desktop
+```
+
+生成无需安装、可直接运行的桌面应用目录：
+
+```powershell
+npm run desktop:pack
+```
+
+Windows 入口为 `release/win-unpacked/Serial Network Debugger.exe`，整个 `win-unpacked` 目录需要一起保留或分发，不需要运行安装程序。`serialport` 包含原生模块，因此应在目标操作系统上安装依赖并打包；Windows、macOS 和 Linux 的桌面产物不能直接跨平台构建复用。
+
 默认只监听 `127.0.0.1`，局域网内其他电脑无法访问。确需开放访问时：
 
 ```powershell

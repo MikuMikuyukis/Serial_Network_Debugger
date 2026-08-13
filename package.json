@@ -1,26 +1,64 @@
 {
   "name": "serial-network-debugger",
   "version": "0.3.1",
+  "description": "跨平台串口、TCP 和 UDP 调试工具",
+  "author": "MikuMikuyukis",
   "private": true,
   "type": "module",
+  "main": "desktop/dist/main.js",
   "workspaces": [
     "frontend",
     "server"
   ],
   "scripts": {
-    "build": "npm run build --workspace frontend && npm run build --workspace server",
+    "build": "npm run build --workspace frontend && npm run build --workspace server && npm run build:desktop",
+    "build:desktop": "esbuild desktop/src/main.ts --bundle --platform=node --format=esm --packages=external --external:electron --sourcemap --outfile=desktop/dist/main.js",
     "dev:frontend": "npm run dev --workspace frontend",
     "dev:server": "tsx server/src/cli.ts",
+    "desktop": "npm run build && electron .",
+    "desktop:pack": "npm run build && electron-builder --dir",
     "start": "node server/dist/cli.js",
     "test": "npm run test --workspace server",
-    "typecheck": "npm run typecheck --workspace frontend && npm run typecheck --workspace server"
+    "typecheck": "npm run typecheck --workspace frontend && npm run typecheck --workspace server && tsc -p desktop/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.3",
+    "@fastify/websocket": "^11.2.0",
+    "fastify": "^5.6.0",
+    "iconv-lite": "^0.7.0",
+    "serialport": "^13.0.0",
+    "ws": "^8.18.0",
+    "zod": "^4.1.0"
+  },
+  "build": {
+    "appId": "com.mikumikuyukis.serial-network-debugger",
+    "productName": "Serial Network Debugger",
+    "asar": true,
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/@serialport/bindings-cpp/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/dist/**/*",
+      "server/dist/**/*",
+      "server/public/**/*",
+      "package.json"
+    ]
   },
   "engines": {
     "node": ">=24.12 <25"
   },
   "allowScripts": {
     "@serialport/bindings-cpp@13.0.0": true,
+    "electron@43.4.0": true,
     "esbuild@0.28.2": true,
     "fsevents@2.3.3": true
+  },
+  "devDependencies": {
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.3"
   }
 }
