@@ -9,7 +9,7 @@
 
 一个跨平台的串口与网络调试工具。Node.js + TypeScript 负责本机串口、Socket、HTTP 和 WebSocket，Vue 3 浏览器界面负责连接配置、数据发送与实时日志显示。
 
-后续开发者或 AI 工具接手前，请先阅读 [2026-08-13 开发交接文档](docs/2026-08-13-development-handoff.md)，其中记录了当前架构、关键数据流、提交历史、验证结果和不可破坏的行为约束。
+后续开发者或 AI 工具接手前，请依次阅读 [AGENTS.md](AGENTS.md)、[文档索引](docs/README.md) 和 [AI 开发指南](docs/AI-development-guide.md)。其中记录了强制 Git 工作流、当前架构、关键数据流、跨层同步点、验证要求和不可破坏的行为约束。日期命名的交接文档只作为历史快照保留。
 
 ## 当前功能
 
@@ -20,6 +20,7 @@
 - UDP 本地绑定、固定远端发送，或自动回复最近的数据来源
 - 文本与 HEX 数据收发，支持 UTF-8、ASCII、GBK 和 CR/LF 行尾
 - HEX 发送支持自由组合帧字段，可重复添加并任意排序帧头、序号、功能码、长度、数据、CRC16 和帧尾
+- 自定义生成支持 UInt、Int、Float32、Float64、BCD 滑块，以及按位、按字节和枚举快速控件
 - 后端周期自动发送，支持 10 ms 至 24 小时间隔、启动后立即发送、累计次数和多页面状态同步
 - 发送预设的新增、编辑、删除、载入与一键发送，每条 HEX 预设可独立保存自由组合的帧格式
 - 发送预设支持拖拽排序和单条复制，复制后的预设与 HEX 帧配置使用独立标识
@@ -33,7 +34,7 @@
 - 支持浅色/深色主题，并在浏览器中记住最近选择的主题和四种通信模式参数
 - 浏览器最多保留 5,000 条日志，批量渲染并保持发送区固定可见
 
-全局配置和每组配置中的通信设置、发送区内容、HEX 帧配置及最多 100 条发送预设保存在当前浏览器的本地存储中。刷新或重新打开页面后会恢复上次选择的配置及其内容，但不会自动建立连接。旧版本保存的数据会自动作为“默认配置”继续使用。不同浏览器或不同电脑的数据彼此独立。
+最多 20 组全局配置，以及每组配置中的通信设置、发送区内容、HEX 帧配置、接收解析配置和最多 100 条发送预设，都保存在当前浏览器或 Electron profile 的本地存储中。刷新或重新打开页面后会恢复上次选择的配置及其内容，但不会自动建立连接。旧版本保存的数据会自动作为“默认配置”继续使用。不同浏览器、不同系统用户或不同电脑的数据彼此独立，当前没有云同步。
 
 顶部“配置”选择器用于切换当前全局配置。通信已连接、TCP Client 正在自动重连或周期发送运行期间不能切换配置，需先停止相应任务。复制全局配置会同时复制其全部发送预设，但会为预设和 HEX 帧生成新标识，后续修改与帧序号状态互不影响；当前使用的配置不能直接删除。
 
@@ -62,10 +63,12 @@ server/src/http/          Fastify REST、WebSocket 和静态页面服务
 server/src/cli.ts         命令行启动入口
 server/test/              Vitest 单元及回环集成测试
 server/public/            Vue 生产构建，由 Node.js 直接托管
-frontend/                 Vue 3 + TypeScript 前端源码
+frontend/src/             Vue 3 + TypeScript 前端源码
+desktop/src/main.ts       Electron 窗口和内嵌 Fastify 服务
+docs/                     当前 AI 开发指南和历史交接文档
 ```
 
-通信核心不依赖 Fastify。后续迁移 Electron 时，主进程可以直接复用 `server/src/core` 和 `server/src/transports`，浏览器部署仍使用当前 HTTP/WebSocket 层。
+浏览器版由独立 Node.js 进程托管 Fastify；Electron 主进程直接复用同一个 `createApp()`，在随机回环端口加载相同的前端、REST、WebSocket 和通信核心。两种形态不存在两套串口或网络实现。
 
 ## 环境要求
 
@@ -120,6 +123,23 @@ npm run desktop:pack
 
 Windows 入口为 `release/win-unpacked/Serial Network Debugger.exe`，整个 `win-unpacked` 目录需要一起保留或分发，不需要运行安装程序。`serialport` 包含原生模块，因此应在目标操作系统上安装依赖并打包；Windows、macOS 和 Linux 的桌面产物不能直接跨平台构建复用。
 
+在 Windows 上生成 NSIS EXE 安装包：
+
+```powershell
+npm exec electron-builder -- --win nsis --x64
+```
+
+安装包生成在 `release/`，文件名包含 [package.json](package.json) 中的版本号。当前没有代码签名，Windows SmartScreen 可能显示未知发布者警告；正式分发应配置可信代码签名证书。`release/` 是本地构建产物，不提交 Git。
+
+macOS 和 Linux 需要在对应系统安装依赖后分别构建，例如：
+
+```bash
+npm exec electron-builder -- --mac dmg
+npm exec electron-builder -- --linux AppImage
+```
+
+不能在 Windows 上构建一次后把同一个 Electron/`serialport` 产物直接用于 macOS 或 Linux。
+
 默认只监听 `127.0.0.1`，局域网内其他电脑无法访问。确需开放访问时：
 
 ```powershell
@@ -154,6 +174,8 @@ npm run build
 
 测试会使用本机回环地址创建临时 TCP/UDP 端点，不访问公网，也不要求真实串口。自动测试涵盖编解码、HEX 自由组帧、配置校验、串口接收合并、TCP/UDP、HTTP、WebSocket 实时事件链路和周期发送调度。
 
+修改前端后必须运行完整构建。Vite 会重建纳入 Git 的 `server/public/index-<hash>.js` 和 `index.html`；不要直接编辑压缩后的哈希文件。
+
 ## 串口权限
 
 Windows 通常无需额外配置。Linux 用户需要具有串口设备权限，常见做法是加入 `dialout` 组，然后重新登录：
@@ -171,9 +193,12 @@ macOS 串口通常显示为 `/dev/cu.*`。三个平台都不能同时由多个�
 - UDP 未配置固定远端时，发送目标为最近一个数据报来源。
 - 暂停日志只停止页面显示，后端仍正常接收和统计数据。
 - 周期发送运行时仍允许手动发送和预设一键发送，后端会将所有发送操作排队执行，避免数据交错。
-- 发送预设只保存在当前浏览器；它不是服务端账号数据，也不会自动同步到其他电脑。
-- 当前版本没有日志落盘和动态快速控件，这些属于后续功能。
-- 服务部署到远程服务器时，操作的是服务器上的串口；要访问浏览器所在电脑的本地串口，应使用未来的 Electron 桌面版本或本地代理。
+- 全局配置、发送预设和解析配置只保存在当前浏览器/Electron profile；它们不是服务端账号数据，也不会自动同步到其他电脑。
+- 当前没有日志落盘。页面刷新或窗口关闭后，内存日志和趋势曲线点不会恢复。
+- 当前没有配置导入/导出、云同步、用户认证、自动更新和安装包数字签名。
+- 服务部署到远程服务器时，浏览器操作的是服务器上的串口；要访问当前电脑的本地串口，应在本机运行 Node.js 服务或 Electron 桌面版。
+- TCP 是字节流，接收解析当前把每条 RX 日志视为一帧，复杂协议仍需要明确的业务分帧策略。
+- 前端复杂拖拽、独立窗口和自动发送交互尚缺少完整浏览器/Electron 端到端自动化测试。
 
 ## 故障排查
 
@@ -182,3 +207,14 @@ macOS 串口通常显示为 `/dev/cu.*`。三个平台都不能同时由多个�
 选择 HEX 发送后，界面会自动启用 HEX 显示，避免 `00` 等不可见字节看起来像空内容。
 
 如果 `npm start` 提示找不到 `server/dist/cli.js`，请先运行 `npm run build`。
+
+如果页面已经出现新控件，但 API 返回旧枚举错误（例如 `Invalid option`），通常是 `8765` 端口仍由旧 Node.js 进程监听。停止旧服务、重新执行 `npm run build` 和 `npm start`，再使用 `Ctrl+F5` 强制刷新。`/api/health` 返回成功只说明某个服务在线，不能证明它是刚构建的版本。
+
+如果 Electron 报错 `electron does not provide an export named 'BrowserWindow'`，检查当前终端是否设置了 `ELECTRON_RUN_AS_NODE=1`：
+
+```powershell
+Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+npm run desktop
+```
+
+Electron 使用单实例锁。代码修改后应关闭已有桌面窗口再重新运行，否则第二次启动只会聚焦旧实例。
