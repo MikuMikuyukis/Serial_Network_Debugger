@@ -291,7 +291,7 @@ function clearRangeReferences(id: string): void {
         <header class="dialog-header">
           <div>
             <span class="eyebrow">HEX FRAME</span>
-            <h2 id="frame-builder-title">发送数据组包</h2>
+            <h2 id="frame-builder-title">HEX 帧格式编辑</h2>
           </div>
           <button class="bar-icon-button" type="button" title="关闭" aria-label="关闭帧配置" @click="close"><X :size="18" /></button>
         </header>

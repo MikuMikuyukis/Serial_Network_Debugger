@@ -219,7 +219,7 @@ h2 { margin: 2px 0 0; font-size: 16px; letter-spacing: 0; }
 .segmented input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .segmented span { display: block; min-width: 48px; padding: 6px 9px; color: var(--muted); text-align: center; font-size: 11px; font-weight: 650; }
 .segmented input:checked + span { color: #fff; background: var(--accent); }
-.frame-config-button { height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; color: var(--muted); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 3px; font-size: 10px; font-weight: 700; }
+.frame-config-button { height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 3px; font-size: 11px; font-weight: 700; }
 .frame-config-button:hover, .frame-config-button.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
 .compact-field { display: flex; align-items: center; gap: 6px; }
 .compact-field > span { color: var(--muted); font-size: 11px; font-weight: 650; }

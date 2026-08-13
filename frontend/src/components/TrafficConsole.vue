@@ -207,6 +207,11 @@ function loadPreset(preset: SendPreset): void {
   lineEnding.value = preset.line_ending;
 }
 
+function openFrameBuilder(): void {
+  format.value = "hex";
+  frameBuilderOpen.value = true;
+}
+
 function applyFrameConfig(config: HexFrameConfig): void {
   frameConfig.value = config;
   try {
@@ -437,15 +442,14 @@ function emitError(error: unknown, fallback: string): void {
           <label><input v-model="format" type="radio" value="hex" :disabled="periodicStatus.active" /><span>HEX</span></label>
         </div>
         <button
-          v-if="format === 'hex'"
           class="frame-config-button"
           :class="{ active: frameConfig.enabled }"
           type="button"
           :disabled="periodicStatus.active"
-          @click="frameBuilderOpen = true"
+          @click="openFrameBuilder"
         >
           <Settings :size="14" />
-          <span>{{ frameConfig.enabled ? `帧配置 · ${frameConfig.fields.length}` : "帧配置" }}</span>
+          <span>{{ frameConfig.enabled ? `编辑 HEX 帧 · ${frameConfig.fields.length} 字段` : "编辑 HEX 帧" }}</span>
         </button>
         <label class="compact-field">
           <span>编码</span>
