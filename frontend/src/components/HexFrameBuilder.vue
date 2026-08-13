@@ -8,6 +8,7 @@ import type {
   HexFrameConfig,
   HexFrameDataField,
   HexFrameField,
+  FrameGeneratorControl,
   FrameByteLength,
 } from "../types";
 
@@ -59,6 +60,17 @@ const crcPresets: Array<{ value: Crc16Parameters["preset"]; label: string }> = [
   { value: "x25", label: "CRC16-X25" },
   { value: "kermit", label: "CRC16-KERMIT" },
   { value: "custom", label: "自定义" },
+];
+
+const generatorControls: Array<{ value: FrameGeneratorControl; label: string }> = [
+  { value: "none", label: "无" },
+  { value: "uint_slider", label: "UInt 滑块" },
+  { value: "int_slider", label: "Int 滑块" },
+  { value: "bit_checkboxes", label: "按位复选框" },
+  { value: "bit_radio", label: "按位单选框" },
+  { value: "byte_switches", label: "按字节开关" },
+  { value: "enum", label: "枚举" },
+  { value: "bcd_slider", label: "BCD 码滑块" },
 ];
 
 const frameExamples = [
@@ -195,16 +207,76 @@ function updateDataType(field: HexFrameDataField): void {
 }
 
 function updateDataSource(field: HexFrameDataField): void {
+  if (field.source === "generated") {
+    field.byte_length ??= 1;
+    const hadGenerator = Boolean(field.generator);
+    field.generator ??= {
+      control: "uint_slider",
+      control_name: field.name || "生成数据",
+      minimum: 0,
+      maximum: maximumForBytes(field.byte_length),
+      step: 1,
+      options: "关闭=0\n开启=1",
+    };
+    field.data_type = generatorDataType(field.generator.control);
+    if (!hadGenerator || !field.value) {
+      field.value = field.generator.control === "enum" ? firstEnumValue(field.generator.options) : "0";
+    }
+    return;
+  }
+  if (field.source === "editor") {
+    field.data_type = "hex";
+    return;
+  }
   if (field.source === "fixed" && field.byte_length === null) {
     field.byte_length = 1;
     if (!field.value) field.value = "00";
   }
 }
 
+function updateGeneratorControl(field: HexFrameDataField): void {
+  const control = field.generator?.control;
+  if (!control) return;
+  field.data_type = generatorDataType(control);
+  if (control === "int_slider") {
+    const bits = (field.byte_length ?? 1) * 8;
+    field.generator!.minimum = Math.max(Number.MIN_SAFE_INTEGER, -(2 ** (bits - 1)));
+    field.generator!.maximum = Math.min(Number.MAX_SAFE_INTEGER, (2 ** (bits - 1)) - 1);
+  } else if (control === "bcd_slider") {
+    field.generator!.minimum = 0;
+    field.generator!.maximum = Math.min(Number.MAX_SAFE_INTEGER, (10 ** ((field.byte_length ?? 1) * 2)) - 1);
+  } else {
+    field.generator!.minimum = 0;
+    field.generator!.maximum = maximumForBytes(field.byte_length ?? 1);
+  }
+  field.value = control === "enum" ? firstEnumValue(field.generator!.options) : "0";
+}
+
+function generatorDataType(control: FrameGeneratorControl): HexFrameDataField["data_type"] {
+  if (control === "int_slider") return "int";
+  if (control === "bcd_slider") return "bcd";
+  return "uint";
+}
+
+function maximumForBytes(byteLength: FrameByteLength): number {
+  return Math.min(Number.MAX_SAFE_INTEGER, (2 ** (byteLength * 8)) - 1);
+}
+
+function firstEnumValue(options: string): string {
+  const first = options.split(/[,\n]/).map((item) => item.trim()).find(Boolean);
+  return first?.split("=").at(-1)?.trim() || "0";
+}
+
 function updateDataLength(field: HexFrameDataField): void {
-  if (field.source !== "fixed" || field.data_type !== "hex" || field.byte_length === null) return;
-  const compact = field.value.replaceAll(/\s+/g, "");
-  if (/^(00)*$/i.test(compact)) field.value = "00".repeat(field.byte_length);
+  if (field.byte_length === null) return;
+  if (field.source === "generated" && field.generator) {
+    updateGeneratorControl(field);
+    return;
+  }
+  if (field.source === "fixed" && field.data_type === "hex") {
+    const compact = field.value.replaceAll(/\s+/g, "");
+    if (/^(00)*$/i.test(compact)) field.value = "00".repeat(field.byte_length);
+  }
 }
 
 function staticField(kind: "header" | "frame_id" | "tail", name: string, value: string): HexFrameField {
@@ -278,7 +350,11 @@ function fieldSummary(field: HexFrameField): string {
   if (field.kind === "sequence") return `${field.value} / +${field.step}`;
   if (field.kind === "length") return `${field.byte_length} Byte ${orderLabel(field.byte_order)}`;
   if (field.kind === "checksum") return `${field.parameters.preset.toUpperCase()} ${orderLabel(field.byte_order)}`;
-  if (field.kind === "data") return field.source === "editor" ? "发送框数据" : field.value || "空";
+  if (field.kind === "data") {
+    if (field.source === "editor") return "发送框数据";
+    if (field.source === "generated") return `${field.generator?.control_name || "自定义生成"}: ${field.value || "0"}`;
+    return field.value || "空";
+  }
   return "";
 }
 
@@ -379,8 +455,19 @@ function clearRangeReferences(id: string): void {
                   </template>
 
                   <template v-else-if="selectedField.kind === 'data'">
-                    <label class="field"><span>数据来源</span><select v-model="selectedField.source" :disabled="selectedField.data_type !== 'hex'" @change="updateDataSource(selectedField)"><option value="fixed">固定值</option><option value="editor">发送框数据</option></select></label>
-                    <label class="field"><span>数据类型</span><select v-model="selectedField.data_type" @change="updateDataType(selectedField)"><option value="hex">HEX 字节</option><option value="uint">无符号整数</option><option value="int">有符号整数</option><option value="float32">Float32</option><option value="float64">Float64</option></select></label>
+                    <label class="field"><span>数据来源</span><select v-model="selectedField.source" @change="updateDataSource(selectedField)"><option value="fixed">固定值</option><option value="editor">发送框数据</option><option value="generated">自定义生成</option></select></label>
+                    <label v-if="selectedField.source !== 'generated'" class="field"><span>数据类型</span><select v-model="selectedField.data_type" @change="updateDataType(selectedField)"><option value="hex">HEX 字节</option><option value="uint">无符号整数</option><option value="int">有符号整数</option><option value="float32">Float32</option><option value="float64">Float64</option></select></label>
+                    <template v-if="selectedField.source === 'generated' && selectedField.generator">
+                      <label class="field"><span>生成控件</span><select v-model="selectedField.generator.control" @change="updateGeneratorControl(selectedField)"><option v-for="control in generatorControls" :key="control.value" :value="control.value">{{ control.label }}</option></select></label>
+                      <label class="field"><span>控件名称</span><input v-model="selectedField.generator.control_name" maxlength="60" /></label>
+                      <template v-if="selectedField.generator.control === 'uint_slider' || selectedField.generator.control === 'int_slider' || selectedField.generator.control === 'bcd_slider'">
+                        <label class="field"><span>滑块最小值</span><input v-model.number="selectedField.generator.minimum" type="number" /></label>
+                        <label class="field"><span>滑块最大值</span><input v-model.number="selectedField.generator.maximum" type="number" /></label>
+                        <label class="field"><span>步进精度</span><input v-model.number="selectedField.generator.step" type="number" min="0.000001" step="any" /></label>
+                      </template>
+                      <label v-if="selectedField.generator.control === 'enum'" class="field span-2"><span>枚举选项（每行 名称=数值）</span><textarea v-model="selectedField.generator.options" rows="4" placeholder="关闭=0&#10;开启=1"></textarea></label>
+                      <label class="field"><span>当前值</span><input v-model="selectedField.value" class="mono-input" /></label>
+                    </template>
                     <label class="field"><span>字节长度</span><select v-model="selectedField.byte_length" :disabled="selectedField.data_type === 'float32' || selectedField.data_type === 'float64'" @change="updateDataLength(selectedField)"><option v-if="selectedField.data_type === 'hex' && selectedField.source === 'editor'" :value="null">任意长度</option><option v-for="length in ([1, 2, 3, 4, 8] as FrameByteLength[])" :key="length" :value="length">{{ length }} Byte</option></select></label>
                     <label class="field"><span>字节顺序</span><select v-model="selectedField.byte_order"><option value="big">高字节在前</option><option value="little">低字节在前</option></select></label>
                     <label v-if="selectedField.source === 'fixed'" class="field span-2"><span>{{ selectedField.data_type === 'hex' ? 'HEX 值' : '数值' }}</span><input v-model="selectedField.value" class="mono-input" /></label>

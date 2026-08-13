@@ -169,6 +169,10 @@ function encodeDataField(
   if (field.source === "editor" && field.data_type !== "hex") {
     throw new Error(`${field.name || "数据字段"} 使用发送框数据时必须选择 HEX 字节类型`);
   }
+  if (field.source === "generated" && !field.generator) {
+    throw new Error(`${field.name || "数据字段"} 缺少自定义生成配置`);
+  }
+  if (field.source === "generated") validateGeneratedValue(field, value);
   if (field.data_type === "hex") {
     let data = parseFieldHex(value, field.name);
     if (field.byte_length !== null && data.length !== field.byte_length) {
@@ -192,6 +196,10 @@ function encodeDataField(
     }
     return data;
   }
+  if (field.data_type === "bcd") {
+    if (field.byte_length === null) throw new Error(`${field.name || "BCD 字段"} 必须选择字节长度`);
+    return encodeBcd(value, field.byte_length, field.byte_order, field.name || "BCD 字段");
+  }
   if (field.byte_length === null) throw new Error(`${field.name || "整数字段"} 必须选择字节长度`);
   let integer: bigint;
   try {
@@ -210,6 +218,40 @@ function encodeDataField(
   }
   if (integer < 0n) integer += 1n << bits;
   return encodeUnsigned(integer, field.byte_length, field.byte_order, field.name || "有符号整数");
+}
+
+function validateGeneratedValue(field: Extract<HexFrameField, { kind: "data" }>, value: string): void {
+  const generator = field.generator!;
+  if (generator.control === "enum") {
+    const allowedValues = generator.options
+      .split(/[,\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => item.slice(item.lastIndexOf("=") + 1).trim());
+    if (!allowedValues.includes(value.trim())) {
+      throw new Error(`${field.name || "枚举字段"} 的当前值不在枚举选项中`);
+    }
+    return;
+  }
+  if (generator.control !== "uint_slider" && generator.control !== "int_slider" && generator.control !== "bcd_slider") return;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) throw new Error(`${field.name || "生成字段"} 必须是有效数字`);
+  if (numeric < generator.minimum || numeric > generator.maximum) {
+    throw new Error(`${field.name || "生成字段"} 必须位于 ${generator.minimum} 到 ${generator.maximum} 之间`);
+  }
+  const steps = (numeric - generator.minimum) / generator.step;
+  if (Math.abs(steps - Math.round(steps)) > 1e-9) {
+    throw new Error(`${field.name || "生成字段"} 不符合步进精度 ${generator.step}`);
+  }
+}
+
+function encodeBcd(value: string, byteLength: number, byteOrder: ByteOrder, label: string): Buffer {
+  const normalized = value.trim();
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) throw new Error(`${label} 必须是非负十进制数`);
+  const digits = normalized.replace(".", "");
+  if (digits.length > byteLength * 2) throw new Error(`${label} 超出 ${byteLength} 字节 BCD 范围`);
+  const data = Buffer.from(digits.padStart(byteLength * 2, "0"), "hex");
+  return byteOrder === "little" ? data.reverse() : data;
 }
 
 function resolveRange(

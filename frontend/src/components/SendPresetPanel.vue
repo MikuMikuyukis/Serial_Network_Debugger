@@ -8,6 +8,7 @@ import {
   MAX_HEX_DISPLAY_LENGTH,
 } from "../hex-display";
 import type { SendPreset, SendPresetDraft } from "../types";
+import FrameGeneratedControls from "./FrameGeneratedControls.vue";
 
 defineProps<{
   presets: SendPreset[];
@@ -26,6 +27,7 @@ const emit = defineEmits<{
   load: [preset: SendPreset];
   send: [preset: SendPreset];
   "edit-frame": [preset: SendPreset];
+  "update-generated": [presetId: string, fieldId: string, value: string];
   "toggle-sequence": [];
 }>();
 
@@ -40,6 +42,12 @@ function hasIndependentFramePayload(preset: SendPreset): boolean {
 
 function canSendPreset(preset: SendPreset): boolean {
   return preset.data.length > 0 || (preset.format === "hex" && hasIndependentFramePayload(preset));
+}
+
+function hasGeneratedControls(preset: SendPreset): boolean {
+  return Boolean(preset.frame_config?.enabled && preset.frame_config.fields.some(
+    (field) => field.kind === "data" && field.source === "generated" && field.generator?.control !== "none",
+  ));
 }
 
 function inputValue(event: Event): string {
@@ -144,7 +152,8 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(preset, index) in presets" :key="preset.id" :class="{ disabled: !preset.enabled }">
+          <template v-for="(preset, index) in presets" :key="preset.id">
+          <tr :class="{ disabled: !preset.enabled }">
             <td class="preset-col-enabled">
               <label class="preset-check" :title="preset.enabled ? '禁用此预设' : '启用此预设'">
                 <input
@@ -267,6 +276,18 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
               </div>
             </td>
           </tr>
+          <tr v-if="hasGeneratedControls(preset)" class="preset-generated-row" :class="{ disabled: !preset.enabled }">
+            <td></td>
+            <td colspan="5">
+              <FrameGeneratedControls
+                :config="preset.frame_config"
+                :disabled="editorLocked || !preset.enabled"
+                compact
+                @update="(fieldId, value) => emit('update-generated', preset.id, fieldId, value)"
+              />
+            </td>
+          </tr>
+          </template>
           <tr v-if="presets.length === 0" class="preset-empty-row">
             <td colspan="6">
               <button type="button" @click="emit('add')"><Plus :size="15" />添加第一条预设</button>

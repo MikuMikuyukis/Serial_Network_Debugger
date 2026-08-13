@@ -4,6 +4,16 @@ export type TextEncoding = "utf-8" | "ascii" | "gbk";
 export type LineEnding = "none" | "cr" | "lf" | "crlf";
 export type ByteOrder = "big" | "little";
 export type FrameByteLength = 1 | 2 | 3 | 4 | 8;
+export type FrameGeneratorControl = "none" | "uint_slider" | "int_slider" | "bit_checkboxes" | "bit_radio" | "byte_switches" | "enum" | "bcd_slider";
+
+export interface HexFrameGenerator {
+  control: FrameGeneratorControl;
+  control_name: string;
+  minimum: number;
+  maximum: number;
+  step: number;
+  options: string;
+}
 
 interface HexFrameFieldBase {
   id: string;
@@ -34,10 +44,11 @@ export interface HexFrameLengthField extends HexFrameFieldBase {
 export interface HexFrameDataField extends HexFrameFieldBase {
   kind: "data";
   byte_length: FrameByteLength | null;
-  source: "fixed" | "editor";
-  data_type: "hex" | "uint" | "int" | "float32" | "float64";
+  source: "fixed" | "editor" | "generated";
+  data_type: "hex" | "uint" | "int" | "float32" | "float64" | "bcd";
   value: string;
   byte_order: ByteOrder;
+  generator?: HexFrameGenerator;
 }
 
 export interface Crc16Parameters {

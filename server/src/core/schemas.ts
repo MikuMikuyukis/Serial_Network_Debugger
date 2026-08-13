@@ -41,15 +41,27 @@ const lengthFrameFieldSchema = z.object({
   ...frameRange,
 });
 
+const frameGeneratorSchema = z.object({
+  control: z.enum(["none", "uint_slider", "int_slider", "bit_checkboxes", "bit_radio", "byte_switches", "enum", "bcd_slider"]),
+  control_name: z.string().max(60),
+  minimum: z.number().finite().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
+  maximum: z.number().finite().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
+  step: z.number().finite().positive().max(Number.MAX_SAFE_INTEGER),
+  options: z.string().max(8_192),
+}).refine((value) => value.minimum <= value.maximum, {
+  message: "生成控件最小值不能大于最大值",
+});
+
 const dataFrameFieldSchema = z.object({
   id: frameFieldId,
   name: frameFieldName,
   kind: z.literal("data"),
   byte_length: frameByteLength.nullable(),
-  source: z.enum(["fixed", "editor"]),
-  data_type: z.enum(["hex", "uint", "int", "float32", "float64"]),
+  source: z.enum(["fixed", "editor", "generated"]),
+  data_type: z.enum(["hex", "uint", "int", "float32", "float64", "bcd"]),
   value: hexString,
   byte_order: byteOrder,
+  generator: frameGeneratorSchema.optional(),
 });
 
 const crc16ParametersSchema = z.object({

@@ -234,12 +234,23 @@ function normalizeHexFrameField(value: unknown): HexFrameField | null {
     const byteLength = field.byte_length;
     const source = field.source;
     const dataType = field.data_type;
+    const generator = field.generator === undefined ? undefined : normalizeFrameGenerator(field.generator);
     return (byteLength === null || isFrameByteLength(byteLength))
       && isDataSource(source)
       && isFrameDataType(dataType)
       && isBoundedString(field.value, 0, 2_097_152)
       && isByteOrder(field.byte_order)
-      ? { ...base, kind: field.kind, byte_length: byteLength, source, data_type: dataType, value: field.value, byte_order: field.byte_order }
+      && (source !== "generated" || (generator !== undefined && generator !== null))
+      ? {
+          ...base,
+          kind: field.kind,
+          byte_length: byteLength,
+          source,
+          data_type: dataType,
+          value: field.value,
+          byte_order: field.byte_order,
+          ...(generator ? { generator } : {}),
+        }
       : null;
   }
   if (field.kind === "checksum") {
@@ -292,12 +303,43 @@ function isByteOrder(value: unknown): value is "big" | "little" {
   return value === "big" || value === "little";
 }
 
-function isDataSource(value: unknown): value is "fixed" | "editor" {
-  return value === "fixed" || value === "editor";
+function normalizeFrameGenerator(value: unknown): import("./types").HexFrameGenerator | null {
+  if (!value || typeof value !== "object") return null;
+  const generator = value as Record<string, unknown>;
+  if (!isGeneratorControl(generator.control)
+    || !isBoundedString(generator.control_name, 0, 60)
+    || !isFiniteNumber(generator.minimum)
+    || !isFiniteNumber(generator.maximum)
+    || generator.minimum > generator.maximum
+    || !isFiniteNumber(generator.step)
+    || generator.step <= 0
+    || !isBoundedString(generator.options, 0, 8_192)) return null;
+  return {
+    control: generator.control,
+    control_name: generator.control_name,
+    minimum: generator.minimum,
+    maximum: generator.maximum,
+    step: generator.step,
+    options: generator.options,
+  };
 }
 
-function isFrameDataType(value: unknown): value is "hex" | "uint" | "int" | "float32" | "float64" {
-  return value === "hex" || value === "uint" || value === "int" || value === "float32" || value === "float64";
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isDataSource(value: unknown): value is "fixed" | "editor" | "generated" {
+  return value === "fixed" || value === "editor" || value === "generated";
+}
+
+function isFrameDataType(value: unknown): value is "hex" | "uint" | "int" | "float32" | "float64" | "bcd" {
+  return value === "hex" || value === "uint" || value === "int" || value === "float32" || value === "float64" || value === "bcd";
+}
+
+function isGeneratorControl(value: unknown): value is import("./types").FrameGeneratorControl {
+  return value === "none" || value === "uint_slider" || value === "int_slider"
+    || value === "bit_checkboxes" || value === "bit_radio" || value === "byte_switches"
+    || value === "enum" || value === "bcd_slider";
 }
 
 function isCrcPreset(value: unknown): value is "modbus" | "arc" | "ccitt_false" | "xmodem" | "x25" | "kermit" | "custom" {

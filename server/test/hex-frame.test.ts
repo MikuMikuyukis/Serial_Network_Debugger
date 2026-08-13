@@ -128,4 +128,55 @@ describe("HEX frame builder", () => {
     await session.send(config, "", async () => undefined);
     expect(session.preview(config, "").data.toString("hex").toUpperCase()).toBe("11");
   });
+
+  it("编码自定义生成的 UInt 位掩码和 BCD 数值", () => {
+    const generator = {
+      control: "bit_checkboxes" as const,
+      control_name: "状态位",
+      minimum: 0,
+      maximum: 65_535,
+      step: 1,
+      options: "",
+    };
+    const config: HexFrameConfig = {
+      version: 1,
+      id: "generated-data",
+      enabled: true,
+      fields: [
+        { id: "bits", kind: "data", name: "状态位", byte_length: 2, source: "generated", data_type: "uint", value: "4660", byte_order: "little", generator },
+        { id: "bcd", kind: "data", name: "温度 BCD", byte_length: 2, source: "generated", data_type: "bcd", value: "12.3", byte_order: "big", generator: { ...generator, control: "bcd_slider", step: 0.1 } },
+      ],
+    };
+    expect(buildHexFrame(config, "").data.toString("hex").toUpperCase()).toBe("34120123");
+  });
+
+  it("拒绝缺少控件配置的自定义生成字段", () => {
+    const config: HexFrameConfig = {
+      version: 1,
+      id: "missing-generator",
+      enabled: true,
+      fields: [
+        { id: "data", kind: "data", name: "生成数据", byte_length: 1, source: "generated", data_type: "uint", value: "1", byte_order: "big" },
+      ],
+    };
+    expect(() => buildHexFrame(config, "")).toThrow("缺少自定义生成配置");
+  });
+
+  it("拒绝超出滑块范围或不符合步进精度的生成值", () => {
+    const field = {
+      id: "slider",
+      kind: "data" as const,
+      name: "目标值",
+      byte_length: 1 as const,
+      source: "generated" as const,
+      data_type: "uint" as const,
+      value: "5",
+      byte_order: "big" as const,
+      generator: { control: "uint_slider" as const, control_name: "目标值", minimum: 0, maximum: 10, step: 2, options: "" },
+    };
+    const config: HexFrameConfig = { version: 1, id: "slider-validation", enabled: true, fields: [field] };
+    expect(() => buildHexFrame(config, "")).toThrow("步进精度 2");
+    field.value = "12";
+    expect(() => buildHexFrame(config, "")).toThrow("0 到 10");
+  });
 });

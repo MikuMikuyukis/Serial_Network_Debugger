@@ -33,6 +33,7 @@ import type {
 } from "../types";
 import SendPresetPanel from "./SendPresetPanel.vue";
 import HexFrameBuilder from "./HexFrameBuilder.vue";
+import FrameGeneratedControls from "./FrameGeneratedControls.vue";
 import VirtualLog from "./VirtualLog.vue";
 
 const props = defineProps<{
@@ -265,6 +266,23 @@ function applyFrameSequences(sequences: Record<string, string> | null): void {
   applyFrameConfig({ ...frameConfig.value, fields });
 }
 
+function updateGeneratedField(fieldId: string, value: string): void {
+  const fields = frameConfig.value.fields.map((field) => field.id === fieldId && field.kind === "data"
+    ? { ...field, value }
+    : field);
+  applyFrameConfig({ ...frameConfig.value, fields });
+}
+
+function updatePresetGeneratedField(presetId: string, fieldId: string, value: string): void {
+  const preset = presets.value.find((item) => item.id === presetId);
+  const config = preset?.frame_config;
+  if (!config) return;
+  const fields = config.fields.map((field) => field.id === fieldId && field.kind === "data"
+    ? { ...field, value }
+    : field);
+  updatePreset(presetId, { frame_config: { ...config, fields } });
+}
+
 async function sendPreset(preset: SendPreset): Promise<void> {
   sendingPresetId.value = preset.id;
   try {
@@ -492,6 +510,7 @@ function emitError(error: unknown, fallback: string): void {
         @load="loadPreset"
         @send="sendPreset"
         @edit-frame="openPresetFrameBuilder"
+        @update-generated="updatePresetGeneratedField"
         @toggle-sequence="toggleSequence"
       />
     </div>
@@ -550,6 +569,11 @@ function emitError(error: unknown, fallback: string): void {
           </button>
         </div>
       </div>
+      <FrameGeneratedControls
+        :config="format === 'hex' ? frameConfig : undefined"
+        :disabled="periodicStatus.active"
+        @update="updateGeneratedField"
+      />
       <div class="send-row">
         <textarea
           :value="displayedSendData"
