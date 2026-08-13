@@ -1,16 +1,19 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { Cable, Moon, Sun } from "@lucide/vue";
 import { apiRequest } from "./api";
 import ConnectionBar from "./components/ConnectionBar.vue";
+import ConfigurationProfiles from "./components/ConfigurationProfiles.vue";
 import ToastStack, { type ToastMessage } from "./components/ToastStack.vue";
 import TrafficConsole from "./components/TrafficConsole.vue";
 import { useCommunication } from "./composables/useCommunication";
-import { loadTheme, saveTheme, type Theme } from "./storage";
+import { loadActiveProfileId, loadTheme, saveTheme, type Theme } from "./storage";
 import type { PeriodicSendStatus, TransportStatus } from "./types";
 
 const toasts = ref<ToastMessage[]>([]);
 const theme = ref<Theme>(loadTheme());
+const activeProfileId = ref(loadActiveProfileId());
+const trafficConsole = ref<InstanceType<typeof TrafficConsole> | null>(null);
 let nextToastId = 1;
 
 function showToast(message: string, error = true): void {
@@ -33,9 +36,19 @@ const {
   clearLogs,
 } = useCommunication(showToast);
 
+const profileSwitchLocked = computed(() => (
+  status.value.connected
+  || status.value.details.reconnecting === true
+  || periodicStatus.value.active
+));
+
 function toggleTheme(): void {
   theme.value = theme.value === "light" ? "dark" : "light";
   saveTheme(theme.value);
+}
+
+function persistActiveProfile(): void {
+  trafficConsole.value?.persistPendingState();
 }
 
 onMounted(async () => {
@@ -57,7 +70,16 @@ onMounted(async () => {
           <h1>Serial Network Debugger</h1>
         </div>
       </div>
+      <ConfigurationProfiles
+        :active-profile-id="activeProfileId"
+        :locked="profileSwitchLocked"
+        @select="activeProfileId = $event"
+        @prepare="persistActiveProfile"
+        @error="showToast"
+      />
       <ConnectionBar
+        :key="activeProfileId"
+        :profile-id="activeProfileId"
         :status="status"
         :events-connected="eventsConnected"
         @status="applyStatus"
@@ -77,6 +99,9 @@ onMounted(async () => {
 
     <main class="workspace">
       <TrafficConsole
+        ref="trafficConsole"
+        :key="activeProfileId"
+        :profile-id="activeProfileId"
         v-model:paused="paused"
         :connected="status.connected"
         :logs="logs"

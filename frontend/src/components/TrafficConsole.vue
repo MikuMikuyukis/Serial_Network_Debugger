@@ -37,6 +37,7 @@ import FrameGeneratedControls from "./FrameGeneratedControls.vue";
 import VirtualLog from "./VirtualLog.vue";
 
 const props = defineProps<{
+  profileId: string;
   connected: boolean;
   logs: LogItem[];
   paused: boolean;
@@ -52,19 +53,19 @@ const emit = defineEmits<{
 
 const displayHex = ref(false);
 const autoScroll = ref(true);
-const storedEditor = loadSendEditor();
+const storedEditor = loadSendEditor(props.profileId);
 const format = ref<DataFormat>(storedEditor.format);
 const textEncoding = ref<TextEncoding>(storedEditor.text_encoding);
 const lineEnding = ref<LineEnding>(storedEditor.line_ending);
 const sendData = ref(storedEditor.data);
-const frameConfig = ref<HexFrameConfig>(loadHexFrameConfig());
+const frameConfig = ref<HexFrameConfig>(loadHexFrameConfig(props.profileId));
 const frameBuilderOpen = ref(false);
 const presetFrameBuilderOpen = ref(false);
 const presetFrameTargetId = ref<string | null>(null);
 const intervalMs = ref(storedEditor.interval_ms);
 const sending = ref(false);
 const changingPeriodic = ref(false);
-const presets = ref<SendPreset[]>(loadSendPresets());
+const presets = ref<SendPreset[]>(loadSendPresets(props.profileId));
 const presetFramePreviews = ref<Record<string, { hex: string; error: string; loading: boolean }>>({});
 const presetsOpen = ref(true);
 const sendingPresetId = ref<string | null>(null);
@@ -260,7 +261,7 @@ function applyPresetFrameConfig(config: HexFrameConfig): void {
 function applyFrameConfig(config: HexFrameConfig): void {
   frameConfig.value = config;
   try {
-    saveHexFrameConfig(config);
+    saveHexFrameConfig(config, props.profileId);
   } catch {
     emit("error", "HEX 帧配置保存失败，请检查浏览器本地存储空间");
   }
@@ -367,6 +368,48 @@ function addPreset(): void {
   schedulePresetSave();
 }
 
+function duplicatePreset(source: SendPreset): void {
+  if (presets.value.length >= MAX_SEND_PRESETS) {
+    emit("error", `发送预设最多保存 ${MAX_SEND_PRESETS} 条`);
+    return;
+  }
+  const index = presets.value.findIndex((preset) => preset.id === source.id);
+  if (index < 0) return;
+  const id = createPresetId();
+  const duplicate: SendPreset = {
+    ...structuredClone(source),
+    id,
+    name: duplicatePresetName(source.name),
+    updated_at: new Date().toISOString(),
+    ...(source.frame_config
+      ? { frame_config: { ...cloneFrameConfig(source.frame_config), id: createFrameConfigId(`preset-${id}`) } }
+      : {}),
+  };
+  presets.value.splice(index + 1, 0, duplicate);
+  schedulePresetSave();
+}
+
+function reorderPreset(draggedId: string, targetId: string, placement: "before" | "after"): void {
+  if (draggedId === targetId) return;
+  const sourceIndex = presets.value.findIndex((preset) => preset.id === draggedId);
+  if (sourceIndex < 0) return;
+  const [preset] = presets.value.splice(sourceIndex, 1);
+  if (!preset) return;
+  const targetIndex = presets.value.findIndex((item) => item.id === targetId);
+  if (targetIndex < 0) {
+    presets.value.splice(sourceIndex, 0, preset);
+    return;
+  }
+  presets.value.splice(targetIndex + (placement === "after" ? 1 : 0), 0, preset);
+  schedulePresetSave();
+}
+
+function duplicatePresetName(name: string): string {
+  const base = name.trim() || "未命名";
+  const suffix = " 副本";
+  return `${base.slice(0, 60 - suffix.length)}${suffix}`;
+}
+
 function updatePreset(id: string, changes: Partial<SendPresetDraft>): void {
   const now = new Date().toISOString();
   const index = presets.value.findIndex((preset) => preset.id === id);
@@ -438,7 +481,7 @@ function persistEditor(): void {
       version: 1,
       ...editorPayload.value,
       interval_ms: intervalMs.value,
-    });
+    }, props.profileId);
   } catch {
     emit("error", "发送区内容保存失败，请检查浏览器本地存储空间");
   }
@@ -515,7 +558,7 @@ async function refreshPresetPreview(
 
 function persistPresets(): void {
   try {
-    saveSendPresets(presets.value);
+    saveSendPresets(presets.value, props.profileId);
   } catch {
     emit("error", "发送预设保存失败，请检查浏览器本地存储空间");
   }
@@ -525,6 +568,8 @@ function persistPendingState(): void {
   persistEditor();
   persistPresets();
 }
+
+defineExpose({ persistPendingState });
 
 function createPresetId(): string {
   return typeof crypto.randomUUID === "function"
@@ -611,6 +656,8 @@ function emitError(error: unknown, fallback: string): void {
         @close="presetsOpen = false"
         @add="addPreset"
         @update="updatePreset"
+        @duplicate="duplicatePreset"
+        @reorder="reorderPreset"
         @remove="removePreset"
         @load="loadPreset"
         @send="sendPreset"

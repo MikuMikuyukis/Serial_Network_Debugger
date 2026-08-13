@@ -11,6 +11,7 @@ import {
 import type { SerialPortInfo, TransportConfig, TransportMode, TransportStatus } from "../types";
 
 const props = defineProps<{
+  profileId: string;
   status: TransportStatus;
   eventsConnected: boolean;
 }>();
@@ -27,7 +28,7 @@ const modes: Array<{ value: TransportMode; label: string }> = [
   { value: "udp", label: "UDP" },
 ];
 
-const settings = ref<TransportSettings>(loadTransportSettings());
+const settings = ref<TransportSettings>(loadTransportSettings(props.profileId));
 const draft = ref<TransportSettings>(cloneTransportSettings(settings.value));
 const serialPorts = ref<SerialPortInfo[]>([]);
 const modalOpen = ref(false);
@@ -71,7 +72,7 @@ function applySettings(): void {
   try {
     buildConfig(draft.value);
     settings.value = cloneTransportSettings(draft.value);
-    saveTransportSettings(settings.value);
+    saveTransportSettings(settings.value, props.profileId);
     closeSettings();
   } catch (error) {
     emit("error", error instanceof Error ? error.message : "通信配置无效");
@@ -82,7 +83,7 @@ async function connect(): Promise<void> {
   busy.value = true;
   try {
     const config = buildConfig(settings.value);
-    saveTransportSettings(settings.value);
+    saveTransportSettings(settings.value, props.profileId);
     const status = await apiRequest<TransportStatus>("/api/connect", {
       method: "POST",
       body: JSON.stringify(config),
