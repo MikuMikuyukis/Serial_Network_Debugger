@@ -233,6 +233,10 @@ export function saveSendPresets(presets: SendPreset[], profileId = DEFAULT_PROFI
   localStorage.setItem(profileStorageKey(SEND_PRESETS_KEY, profileId), JSON.stringify(presets.slice(0, MAX_SEND_PRESETS)));
 }
 
+export function cloneSendPreset(preset: SendPreset): SendPreset {
+  return JSON.parse(JSON.stringify(preset)) as SendPreset;
+}
+
 export function sendPresetsStorageKey(profileId = DEFAULT_PROFILE_ID): string {
   return profileStorageKey(SEND_PRESETS_KEY, profileId);
 }

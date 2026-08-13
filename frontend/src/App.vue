@@ -59,14 +59,6 @@ function persistActiveProfile(): void {
   trafficConsole.value?.persistPendingState();
 }
 
-function switchDetachedAnalyzer(view: "dashboard" | "parser"): void {
-  detachedTool.value = view;
-  const url = new URL(window.location.href);
-  url.searchParams.set("tool", view);
-  window.history.replaceState(null, "", url);
-  document.title = `${view === "dashboard" ? "实时仪表盘" : "解析配置"} - Serial Network Debugger`;
-}
-
 function closeDetachedWindow(): void {
   window.close();
 }
@@ -92,7 +84,7 @@ onMounted(async () => {
       :profile-id="activeProfileId"
       :frames="receivedFrames"
       :view="detachedTool"
-      @request-view="switchDetachedAnalyzer"
+      standalone
       @error="showToast"
     />
     <TrafficConsole

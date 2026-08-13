@@ -16,6 +16,7 @@ const props = defineProps<{
   profileId: string;
   frames: ReceivedFrame[];
   view: "dashboard" | "parser";
+  standalone?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -318,14 +319,14 @@ function cloneParserConfig(value: FrameParserConfig): FrameParserConfig {
         <span><small>未匹配</small>{{ unmatchedCount }}</span>
         <span :class="{ error: errorCount > 0 }"><small>错误</small>{{ errorCount }}</span>
         <button class="analyzer-clear-button" type="button" @click="clearAnalysis">清空数据</button>
-        <button class="frame-config-button" type="button" @click="emit('request-view', 'parser')"><Settings :size="14" />解析配置</button>
+        <button v-if="!standalone" class="frame-config-button" type="button" @click="emit('request-view', 'parser')"><Settings :size="14" />解析配置</button>
       </div>
     </header>
 
     <div v-if="!config.enabled || config.fields.length === 0" class="analyzer-empty">
       <Activity :size="34" />
       <strong>{{ config.fields.length === 0 ? "尚未配置接收字段" : "接收帧解析已停用" }}</strong>
-      <button type="button" @click="emit('request-view', 'parser')"><Settings :size="15" />配置解析格式</button>
+      <button v-if="!standalone" type="button" @click="emit('request-view', 'parser')"><Settings :size="15" />配置解析格式</button>
     </div>
 
     <div v-else class="analyzer-scroll">

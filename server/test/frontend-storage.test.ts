@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  cloneSendPreset,
   copyConfigurationProfileData,
   frameParserStorageKey,
   hexFrameStorageKey,
@@ -87,6 +88,22 @@ describe("frontend configuration profile storage", () => {
     expect(hexFrameStorageKey("first")).toBe("snd.profile.first.hex-frame-config.v1");
     expect(frameParserStorageKey("first")).toBe("snd.profile.first.frame-parser-config.v1");
     expect(frameParserStorageKey("first")).not.toBe(frameParserStorageKey("second"));
+  });
+
+  it("能够复制 Vue 响应式发送预设并断开嵌套引用", () => {
+    const source = new Proxy(
+      { ...preset("reactive-preset", "AA"), format: "hex" as const, frame_config: frameConfig("reactive-frame") },
+      {},
+    );
+
+    expect(() => structuredClone(source)).toThrow();
+    const cloned = cloneSendPreset(source);
+
+    expect(cloned).toEqual(source);
+    expect(cloned).not.toBe(source);
+    expect(cloned.frame_config).not.toBe(source.frame_config);
+    cloned.frame_config!.fields[0]!.name = "修改后的帧头";
+    expect(source.frame_config.fields[0]!.name).toBe("帧头");
   });
 
   it("复制配置时为预设和 HEX 帧生成独立标识", () => {

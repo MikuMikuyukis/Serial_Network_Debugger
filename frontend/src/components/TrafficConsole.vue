@@ -10,6 +10,7 @@ import {
   MAX_HEX_DISPLAY_LENGTH,
 } from "../hex-display";
 import {
+  cloneSendPreset,
   DEFAULT_HEX_FRAME_CONFIG,
   hexFrameStorageKey,
   loadSendEditor,
@@ -61,9 +62,12 @@ const emit = defineEmits<{
 
 const displayHex = ref(false);
 const autoScroll = ref(true);
-const activeTool = ref<"presets" | "dashboard" | "parser">("presets");
+type WorkspaceTool = "presets" | "dashboard" | "parser";
+const TOOL_ORDER: WorkspaceTool[] = ["presets", "dashboard", "parser"];
+const activeTool = ref<WorkspaceTool>("presets");
 const analyzerView = ref<"dashboard" | "parser">("dashboard");
 const toolPanelOpen = ref(true);
+const detachedTools = ref<Record<WorkspaceTool, boolean>>({ presets: false, dashboard: false, parser: false });
 const storedEditor = loadSendEditor(props.profileId);
 const format = ref<DataFormat>(storedEditor.format);
 const textEncoding = ref<TextEncoding>(storedEditor.text_encoding);
@@ -84,6 +88,8 @@ let sequenceGeneration = 0;
 let editorSaveTimer: number | undefined;
 let presetSaveTimer: number | undefined;
 let presetPreviewTimer: number | undefined;
+const detachedWindows = new Map<WorkspaceTool, Window>();
+const detachedWindowTimers = new Map<WorkspaceTool, number>();
 const presetPreviewSignatures = new Map<string, string>();
 const presetPreviewGenerations = new Map<string, number>();
 const pendingAutoSendPresetIds = new Set<string>();
@@ -141,15 +147,26 @@ onBeforeUnmount(() => {
   if (editorSaveTimer !== undefined) window.clearTimeout(editorSaveTimer);
   if (presetSaveTimer !== undefined) window.clearTimeout(presetSaveTimer);
   if (presetPreviewTimer !== undefined) window.clearTimeout(presetPreviewTimer);
+  for (const timer of detachedWindowTimers.values()) window.clearInterval(timer);
+  detachedWindowTimers.clear();
 });
 
-function selectTool(tool: "presets" | "dashboard" | "parser"): void {
+function selectTool(tool: WorkspaceTool): void {
+  if (detachedTools.value[tool]) {
+    focusDetachedTool(tool);
+    return;
+  }
   activeTool.value = tool;
   if (tool === "dashboard" || tool === "parser") analyzerView.value = tool;
   toolPanelOpen.value = true;
 }
 
 function openDetachedTool(tool = activeTool.value): void {
+  const existing = detachedWindows.get(tool);
+  if (existing && !existing.closed) {
+    existing.focus();
+    return;
+  }
   const url = new URL(window.location.href);
   url.search = "";
   url.searchParams.set("tool", tool);
@@ -163,8 +180,36 @@ function openDetachedTool(tool = activeTool.value): void {
     emit("error", "独立窗口被浏览器拦截，请允许此站点打开弹出式窗口");
     return;
   }
+  detachedWindows.set(tool, popup);
+  detachedTools.value = { ...detachedTools.value, [tool]: true };
   popup.focus();
-  if (!props.toolOnly) toolPanelOpen.value = false;
+  selectNextAvailableTool(tool);
+  const timer = window.setInterval(() => {
+    if (!popup.closed) return;
+    restoreDetachedTool(tool);
+  }, 300);
+  detachedWindowTimers.set(tool, timer);
+}
+
+function selectNextAvailableTool(detachedTool: WorkspaceTool): void {
+  if (props.toolOnly || activeTool.value !== detachedTool) return;
+  const nextTool = TOOL_ORDER.find((tool) => !detachedTools.value[tool]);
+  if (nextTool) selectTool(nextTool);
+  else toolPanelOpen.value = false;
+}
+
+function restoreDetachedTool(tool: WorkspaceTool): void {
+  const timer = detachedWindowTimers.get(tool);
+  if (timer !== undefined) window.clearInterval(timer);
+  detachedWindowTimers.delete(tool);
+  detachedWindows.delete(tool);
+  detachedTools.value = { ...detachedTools.value, [tool]: false };
+  selectTool(tool);
+}
+
+function focusDetachedTool(tool: WorkspaceTool): void {
+  const popup = detachedWindows.get(tool);
+  if (popup && !popup.closed) popup.focus();
 }
 
 function handleStorageChange(event: StorageEvent): void {
@@ -436,7 +481,7 @@ function duplicatePreset(source: SendPreset): void {
   if (index < 0) return;
   const id = createPresetId();
   const duplicate: SendPreset = {
-    ...structuredClone(source),
+    ...cloneSendPreset(source),
     id,
     name: duplicatePresetName(source.name),
     updated_at: new Date().toISOString(),
@@ -709,9 +754,9 @@ function emitError(error: unknown, fallback: string): void {
       <aside v-show="toolPanelOpen" class="workspace-tool-panel">
         <header class="workspace-tool-tabs">
           <div role="tablist" aria-label="工具面板">
-            <button type="button" :class="{ active: activeTool === 'presets' }" @click="selectTool('presets')"><List :size="13" />发送预设</button>
-            <button type="button" :class="{ active: activeTool === 'dashboard' }" @click="selectTool('dashboard')"><Gauge :size="13" />仪表盘</button>
-            <button type="button" :class="{ active: activeTool === 'parser' }" @click="selectTool('parser')"><Settings :size="13" />解析配置</button>
+            <button v-if="!detachedTools.presets" type="button" :class="{ active: activeTool === 'presets' }" @click="selectTool('presets')"><List :size="13" />发送预设</button>
+            <button v-if="!detachedTools.dashboard" type="button" :class="{ active: activeTool === 'dashboard' }" @click="selectTool('dashboard')"><Gauge :size="13" />仪表盘</button>
+            <button v-if="!detachedTools.parser" type="button" :class="{ active: activeTool === 'parser' }" @click="selectTool('parser')"><Settings :size="13" />解析配置</button>
           </div>
           <div>
             <button class="icon-tool-button" type="button" title="拆分到独立窗口" aria-label="拆分当前工具到独立窗口" @click="openDetachedTool()"><ExternalLink :size="14" /></button>
