@@ -910,6 +910,7 @@ function emitError(error: unknown, fallback: string): void {
       :config="presetFrameTarget.frame_config"
       :editor-data="presetFrameTarget.data"
       :title="`预设 HEX 帧格式 · ${presetFrameTarget.name || '未命名'}`"
+      :show-examples="false"
       @apply="applyPresetFrameConfig"
       @error="emit('error', $event)"
     />

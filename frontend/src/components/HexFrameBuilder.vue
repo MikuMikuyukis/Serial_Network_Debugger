@@ -17,6 +17,7 @@ const props = defineProps<{
   config: HexFrameConfig;
   editorData: string;
   title?: string;
+  showExamples?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -388,13 +389,13 @@ function clearRangeReferences(id: string): void {
             <div class="frame-palette-heading">
               <strong>添加字段</strong>
               <div class="frame-palette-actions">
-                <label class="frame-example-select">
+                <label v-if="showExamples !== false" class="frame-example-select">
                   <span>样例</span>
                   <select v-model="selectedExample">
                     <option v-for="example in frameExamples" :key="example.value" :value="example.value">{{ example.label }}</option>
                   </select>
                 </label>
-                <button class="frame-example-button" type="button" title="用样例替换当前草稿" @click="loadExample"><FileInput :size="14" /><span>载入样例</span></button>
+                <button v-if="showExamples !== false" class="frame-example-button" type="button" title="用样例替换当前草稿" @click="loadExample"><FileInput :size="14" /><span>载入样例</span></button>
                 <label class="settings-toggle frame-enable-toggle"><input v-model="draft.enabled" type="checkbox" /><span>启用组帧</span></label>
               </div>
             </div>
