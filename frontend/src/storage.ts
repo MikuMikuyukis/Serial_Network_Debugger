@@ -555,6 +555,7 @@ function isFrameDataType(value: unknown): value is "hex" | "uint" | "int" | "flo
 
 function isGeneratorControl(value: unknown): value is import("./types").FrameGeneratorControl {
   return value === "none" || value === "uint_slider" || value === "int_slider"
+    || value === "float32_slider" || value === "float64_slider"
     || value === "bit_checkboxes" || value === "bit_radio" || value === "byte_switches"
     || value === "enum" || value === "bcd_slider";
 }

@@ -233,14 +233,19 @@ function validateGeneratedValue(field: Extract<HexFrameField, { kind: "data" }>,
     }
     return;
   }
-  if (generator.control !== "uint_slider" && generator.control !== "int_slider" && generator.control !== "bcd_slider") return;
+  if (generator.control !== "uint_slider" && generator.control !== "int_slider"
+    && generator.control !== "float32_slider" && generator.control !== "float64_slider"
+    && generator.control !== "bcd_slider") return;
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) throw new Error(`${field.name || "生成字段"} 必须是有效数字`);
   if (numeric < generator.minimum || numeric > generator.maximum) {
     throw new Error(`${field.name || "生成字段"} 必须位于 ${generator.minimum} 到 ${generator.maximum} 之间`);
   }
   const steps = (numeric - generator.minimum) / generator.step;
-  if (Math.abs(steps - Math.round(steps)) > 1e-9) {
+  const nearestValue = generator.minimum + Math.round(steps) * generator.step;
+  const scale = Math.max(1, Math.abs(numeric), Math.abs(generator.minimum), Math.abs(nearestValue));
+  const tolerance = Math.max(generator.step * 1e-9, Number.EPSILON * scale * 16);
+  if (Math.abs(numeric - nearestValue) > tolerance) {
     throw new Error(`${field.name || "生成字段"} 不符合步进精度 ${generator.step}`);
   }
 }

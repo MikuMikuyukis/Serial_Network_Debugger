@@ -42,7 +42,7 @@ const lengthFrameFieldSchema = z.object({
 });
 
 const frameGeneratorSchema = z.object({
-  control: z.enum(["none", "uint_slider", "int_slider", "bit_checkboxes", "bit_radio", "byte_switches", "enum", "bcd_slider"]),
+  control: z.enum(["none", "uint_slider", "int_slider", "float32_slider", "float64_slider", "bit_checkboxes", "bit_radio", "byte_switches", "enum", "bcd_slider"]),
   control_name: z.string().max(60),
   minimum: z.number().finite().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
   maximum: z.number().finite().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),

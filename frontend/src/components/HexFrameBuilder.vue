@@ -67,6 +67,8 @@ const generatorControls: Array<{ value: FrameGeneratorControl; label: string }> 
   { value: "none", label: "无" },
   { value: "uint_slider", label: "UInt 滑块" },
   { value: "int_slider", label: "Int 滑块" },
+  { value: "float32_slider", label: "Float32 滑块" },
+  { value: "float64_slider", label: "Float64 滑块" },
   { value: "bit_checkboxes", label: "按位复选框" },
   { value: "bit_radio", label: "按位单选框" },
   { value: "byte_switches", label: "按字节开关" },
@@ -243,6 +245,11 @@ function updateGeneratorControl(field: HexFrameDataField): void {
     const bits = (field.byte_length ?? 1) * 8;
     field.generator!.minimum = Math.max(Number.MIN_SAFE_INTEGER, -(2 ** (bits - 1)));
     field.generator!.maximum = Math.min(Number.MAX_SAFE_INTEGER, (2 ** (bits - 1)) - 1);
+  } else if (control === "float32_slider" || control === "float64_slider") {
+    field.byte_length = control === "float32_slider" ? 4 : 8;
+    field.generator!.minimum = -100;
+    field.generator!.maximum = 100;
+    field.generator!.step = 0.1;
   } else if (control === "bcd_slider") {
     field.generator!.minimum = 0;
     field.generator!.maximum = Math.min(Number.MAX_SAFE_INTEGER, (10 ** ((field.byte_length ?? 1) * 2)) - 1);
@@ -255,6 +262,8 @@ function updateGeneratorControl(field: HexFrameDataField): void {
 
 function generatorDataType(control: FrameGeneratorControl): HexFrameDataField["data_type"] {
   if (control === "int_slider") return "int";
+  if (control === "float32_slider") return "float32";
+  if (control === "float64_slider") return "float64";
   if (control === "bcd_slider") return "bcd";
   return "uint";
 }
@@ -461,7 +470,7 @@ function clearRangeReferences(id: string): void {
                     <template v-if="selectedField.source === 'generated' && selectedField.generator">
                       <label class="field"><span>生成控件</span><select v-model="selectedField.generator.control" @change="updateGeneratorControl(selectedField)"><option v-for="control in generatorControls" :key="control.value" :value="control.value">{{ control.label }}</option></select></label>
                       <label class="field"><span>控件名称</span><input v-model="selectedField.generator.control_name" maxlength="60" /></label>
-                      <template v-if="selectedField.generator.control === 'uint_slider' || selectedField.generator.control === 'int_slider' || selectedField.generator.control === 'bcd_slider'">
+                      <template v-if="selectedField.generator.control === 'uint_slider' || selectedField.generator.control === 'int_slider' || selectedField.generator.control === 'float32_slider' || selectedField.generator.control === 'float64_slider' || selectedField.generator.control === 'bcd_slider'">
                         <label class="field"><span>滑块最小值</span><input v-model.number="selectedField.generator.minimum" type="number" /></label>
                         <label class="field"><span>滑块最大值</span><input v-model.number="selectedField.generator.maximum" type="number" /></label>
                         <label class="field"><span>步进精度</span><input v-model.number="selectedField.generator.step" type="number" min="0.000001" step="any" /></label>

@@ -106,6 +106,36 @@ describe("frontend configuration profile storage", () => {
     expect(source.frame_config.fields[0]!.name).toBe("帧头");
   });
 
+  it("保存并恢复 Float 自定义生成控件", () => {
+    const config: HexFrameConfig = {
+      version: 1,
+      id: "float-controls",
+      enabled: true,
+      fields: [{
+        id: "float64",
+        kind: "data",
+        name: "浮点目标值",
+        byte_length: 8,
+        source: "generated",
+        data_type: "float64",
+        value: "1.5",
+        byte_order: "little",
+        generator: {
+          control: "float64_slider",
+          control_name: "浮点目标值",
+          minimum: -100,
+          maximum: 100,
+          step: 0.1,
+          options: "",
+        },
+      }],
+    };
+
+    saveHexFrameConfig(config, "float-profile");
+
+    expect(loadHexFrameConfig("float-profile")).toEqual(config);
+  });
+
   it("复制配置时为预设和 HEX 帧生成独立标识", () => {
     const frame = frameConfig("source-frame");
     saveHexFrameConfig(frame, "source");

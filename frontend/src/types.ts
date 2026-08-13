@@ -4,7 +4,7 @@ export type TextEncoding = "utf-8" | "ascii" | "gbk";
 export type LineEnding = "none" | "cr" | "lf" | "crlf";
 export type ByteOrder = "big" | "little";
 export type FrameByteLength = 1 | 2 | 3 | 4 | 8;
-export type FrameGeneratorControl = "none" | "uint_slider" | "int_slider" | "bit_checkboxes" | "bit_radio" | "byte_switches" | "enum" | "bcd_slider";
+export type FrameGeneratorControl = "none" | "uint_slider" | "int_slider" | "float32_slider" | "float64_slider" | "bit_checkboxes" | "bit_radio" | "byte_switches" | "enum" | "bcd_slider";
 
 export interface HexFrameGenerator {
   control: FrameGeneratorControl;

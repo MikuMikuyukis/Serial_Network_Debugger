@@ -150,6 +150,49 @@ describe("HEX frame builder", () => {
     expect(buildHexFrame(config, "").data.toString("hex").toUpperCase()).toBe("34120123");
   });
 
+  it("按 IEEE 754 和字段字节顺序编码自定义生成的 Float32/Float64", () => {
+    const generator = {
+      control: "float32_slider" as const,
+      control_name: "浮点值",
+      minimum: -100,
+      maximum: 100,
+      step: 0.1,
+      options: "",
+    };
+    const config: HexFrameConfig = {
+      version: 1,
+      id: "generated-floats",
+      enabled: true,
+      fields: [
+        { id: "f32-be", kind: "data", name: "Float32 BE", byte_length: 4, source: "generated", data_type: "float32", value: "1.5", byte_order: "big", generator },
+        { id: "f32-le", kind: "data", name: "Float32 LE", byte_length: 4, source: "generated", data_type: "float32", value: "1.5", byte_order: "little", generator },
+        { id: "f64-be", kind: "data", name: "Float64 BE", byte_length: 8, source: "generated", data_type: "float64", value: "1.5", byte_order: "big", generator: { ...generator, control: "float64_slider" } },
+      ],
+    };
+    expect(buildHexFrame(config, "").data.toString("hex").toUpperCase())
+      .toBe("3FC000000000C03F3FF8000000000000");
+  });
+
+  it("拒绝 Float 自定义生成值超出范围、不符合步进或不是有限数", () => {
+    const field = {
+      id: "float-slider",
+      kind: "data" as const,
+      name: "浮点目标值",
+      byte_length: 4 as const,
+      source: "generated" as const,
+      data_type: "float32" as const,
+      value: "1.25",
+      byte_order: "big" as const,
+      generator: { control: "float32_slider" as const, control_name: "浮点目标值", minimum: -1, maximum: 2, step: 0.1, options: "" },
+    };
+    const config: HexFrameConfig = { version: 1, id: "float-validation", enabled: true, fields: [field] };
+    expect(() => buildHexFrame(config, "")).toThrow("步进精度 0.1");
+    field.value = "3";
+    expect(() => buildHexFrame(config, "")).toThrow("-1 到 2");
+    field.value = "Infinity";
+    expect(() => buildHexFrame(config, "")).toThrow("必须是有效数字");
+  });
+
   it("拒绝缺少控件配置的自定义生成字段", () => {
     const config: HexFrameConfig = {
       version: 1,

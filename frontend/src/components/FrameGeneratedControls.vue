@@ -104,7 +104,7 @@ function enumOptions(field: HexFrameDataField): Array<{ label: string; value: st
         <code>{{ field.value }}</code>
       </div>
 
-      <template v-if="field.generator?.control === 'uint_slider' || field.generator?.control === 'int_slider' || field.generator?.control === 'bcd_slider'">
+      <template v-if="field.generator?.control === 'uint_slider' || field.generator?.control === 'int_slider' || field.generator?.control === 'float32_slider' || field.generator?.control === 'float64_slider' || field.generator?.control === 'bcd_slider'">
         <div class="generated-slider-row">
           <input
             type="range"
