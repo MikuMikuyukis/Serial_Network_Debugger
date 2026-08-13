@@ -10,6 +10,7 @@ import {
   MAX_HEX_DISPLAY_LENGTH,
 } from "../hex-display";
 import {
+  DEFAULT_HEX_FRAME_CONFIG,
   loadSendEditor,
   loadHexFrameConfig,
   loadSendPresets,
@@ -57,6 +58,8 @@ const lineEnding = ref<LineEnding>(storedEditor.line_ending);
 const sendData = ref(storedEditor.data);
 const frameConfig = ref<HexFrameConfig>(loadHexFrameConfig());
 const frameBuilderOpen = ref(false);
+const presetFrameBuilderOpen = ref(false);
+const presetFrameTargetId = ref<string | null>(null);
 const intervalMs = ref(storedEditor.interval_ms);
 const sending = ref(false);
 const changingPeriodic = ref(false);
@@ -89,6 +92,7 @@ const hasIndependentFramePayload = computed(() => frameConfig.value.enabled && f
   return field.value.trim().length > 0;
 }));
 const canSendEditor = computed(() => sendData.value.length > 0 || (format.value === "hex" && hasIndependentFramePayload.value));
+const presetFrameTarget = computed(() => presets.value.find((preset) => preset.id === presetFrameTargetId.value) ?? null);
 
 watch(format, (value) => {
   if (value === "hex") displayHex.value = true;
@@ -107,25 +111,22 @@ onBeforeUnmount(() => {
   if (presetSaveTimer !== undefined) window.clearTimeout(presetSaveTimer);
 });
 
-async function sendPayload(payload: SendPayload): Promise<void> {
-  const request: SendPayload = payload.format === "hex" && frameConfig.value.enabled
-    ? { ...payload, frame_config: frameConfig.value }
-    : payload;
+async function sendPayload(payload: SendPayload): Promise<Record<string, string> | null> {
   const response = await apiRequest<{
     ok: boolean;
     message: string;
     frame_sequences: Record<string, string> | null;
   }>("/api/send", {
     method: "POST",
-    body: JSON.stringify(request),
+    body: JSON.stringify(payload),
   });
-  applyFrameSequences(response.frame_sequences);
+  return response.frame_sequences;
 }
 
 async function send(): Promise<void> {
   sending.value = true;
   try {
-    await sendPayload(editorPayload.value);
+    applyFrameSequences(await sendPayload(editorPayload.value));
   } catch (error) {
     emitError(error, "发送失败");
   } finally {
@@ -205,11 +206,38 @@ function loadPreset(preset: SendPreset): void {
   format.value = preset.format;
   textEncoding.value = preset.text_encoding;
   lineEnding.value = preset.line_ending;
+  applyFrameConfig(preset.frame_config
+    ? { ...cloneFrameConfig(preset.frame_config), id: createFrameConfigId("editor") }
+    : cloneFrameConfig(DEFAULT_HEX_FRAME_CONFIG));
 }
 
 function openFrameBuilder(): void {
   format.value = "hex";
   frameBuilderOpen.value = true;
+}
+
+function openPresetFrameBuilder(preset: SendPreset): void {
+  if (!preset.frame_config) {
+    updatePreset(preset.id, {
+      format: "hex",
+      frame_config: {
+        version: 1,
+        id: createFrameConfigId(`preset-${preset.id}`),
+        enabled: false,
+        fields: [],
+      },
+    });
+  } else if (preset.format !== "hex") {
+    updatePreset(preset.id, { format: "hex" });
+  }
+  presetFrameTargetId.value = preset.id;
+  presetFrameBuilderOpen.value = true;
+}
+
+function applyPresetFrameConfig(config: HexFrameConfig): void {
+  const presetId = presetFrameTargetId.value;
+  if (!presetId) return;
+  updatePreset(presetId, { format: "hex", frame_config: config });
 }
 
 function applyFrameConfig(config: HexFrameConfig): void {
@@ -222,7 +250,7 @@ function applyFrameConfig(config: HexFrameConfig): void {
 }
 
 function canSendPreset(preset: SendPreset): boolean {
-  return preset.data.length > 0 || (preset.format === "hex" && hasIndependentFramePayload.value);
+  return preset.data.length > 0 || (preset.format === "hex" && frameHasIndependentPayload(preset.frame_config));
 }
 
 function applyFrameSequences(sequences: Record<string, string> | null): void {
@@ -240,12 +268,26 @@ function applyFrameSequences(sequences: Record<string, string> | null): void {
 async function sendPreset(preset: SendPreset): Promise<void> {
   sendingPresetId.value = preset.id;
   try {
-    await sendPayload(preset);
+    applyPresetFrameSequences(preset.id, await sendPayload(preset));
   } catch (error) {
     emitError(error, "预设发送失败");
   } finally {
     sendingPresetId.value = null;
   }
+}
+
+function applyPresetFrameSequences(presetId: string, sequences: Record<string, string> | null): void {
+  if (!sequences) return;
+  const preset = presets.value.find((item) => item.id === presetId);
+  const config = preset?.frame_config;
+  if (!config) return;
+  let changed = false;
+  const fields = config.fields.map((field) => {
+    if (field.kind !== "sequence" || sequences[field.id] === undefined) return field;
+    changed = true;
+    return { ...field, value: sequences[field.id]! };
+  });
+  if (changed) updatePreset(presetId, { frame_config: { ...config, fields } });
 }
 
 function addPreset(): void {
@@ -297,7 +339,7 @@ async function toggleSequence(): Promise<void> {
     for (const [index, preset] of queue.entries()) {
       if (generation !== sequenceGeneration) break;
       sendingPresetId.value = preset.id;
-      await sendPayload(preset);
+      applyPresetFrameSequences(preset.id, await sendPayload(preset));
       if (generation !== sequenceGeneration) break;
       if (index < queue.length - 1 && preset.delay_ms > 0) {
         await sequenceDelay(preset.delay_ms, generation);
@@ -368,6 +410,25 @@ function createPresetId(): string {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function createFrameConfigId(prefix: string): string {
+  const suffix = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}-${suffix}`.slice(0, 80);
+}
+
+function cloneFrameConfig(config: HexFrameConfig): HexFrameConfig {
+  return JSON.parse(JSON.stringify(config)) as HexFrameConfig;
+}
+
+function frameHasIndependentPayload(config: HexFrameConfig | undefined): boolean {
+  return Boolean(config?.enabled && config.fields.some((field) => {
+    if (field.kind === "sequence" || field.kind === "length" || field.kind === "checksum") return true;
+    if (field.kind === "data" && field.source === "editor") return false;
+    return field.value.trim().length > 0;
+  }));
+}
+
 function emitError(error: unknown, fallback: string): void {
   emit("error", error instanceof Error ? error.message : fallback);
 }
@@ -424,13 +485,13 @@ function emitError(error: unknown, fallback: string): void {
         :editor-locked="periodicStatus.active"
         :sending-preset-id="sendingPresetId"
         :sequence-running="sequenceRunning"
-        :allow-empty-hex-frame="hasIndependentFramePayload"
         @close="presetsOpen = false"
         @add="addPreset"
         @update="updatePreset"
         @remove="removePreset"
         @load="loadPreset"
         @send="sendPreset"
+        @edit-frame="openPresetFrameBuilder"
         @toggle-sequence="toggleSequence"
       />
     </div>
@@ -510,6 +571,15 @@ function emitError(error: unknown, fallback: string): void {
       :config="frameConfig"
       :editor-data="sendData"
       @apply="applyFrameConfig"
+      @error="emit('error', $event)"
+    />
+    <HexFrameBuilder
+      v-if="presetFrameTarget?.frame_config"
+      v-model:open="presetFrameBuilderOpen"
+      :config="presetFrameTarget.frame_config"
+      :editor-data="presetFrameTarget.data"
+      :title="`预设 HEX 帧格式 · ${presetFrameTarget.name || '未命名'}`"
+      @apply="applyPresetFrameConfig"
       @error="emit('error', $event)"
     />
   </section>

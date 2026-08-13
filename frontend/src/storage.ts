@@ -326,6 +326,9 @@ function normalizeSendPreset(value: unknown): SendPreset | null {
     && (preset.line_ending === "none" || preset.line_ending === "cr" || preset.line_ending === "lf" || preset.line_ending === "crlf")
     && typeof preset.updated_at === "string";
   if (!valid) return null;
+  const frameConfig = preset.frame_config === undefined
+    ? undefined
+    : normalizeHexFrameConfig(preset.frame_config) ?? undefined;
   return {
     id: preset.id!,
     name: preset.name!,
@@ -336,6 +339,7 @@ function normalizeSendPreset(value: unknown): SendPreset | null {
     enabled: typeof preset.enabled === "boolean" ? preset.enabled : true,
     delay_ms: isValidDelay(preset.delay_ms) ? preset.delay_ms : 50,
     updated_at: preset.updated_at!,
+    ...(frameConfig ? { frame_config: frameConfig } : {}),
   };
 }
 

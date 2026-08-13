@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Download, ListStart, Plus, Send, Square, Trash2, X } from "@lucide/vue";
+import { Download, ListStart, Plus, Send, Settings, Square, Trash2, X } from "@lucide/vue";
 import {
   compactHexDisplay,
   deleteAcrossHexDisplaySpace,
@@ -16,7 +16,6 @@ defineProps<{
   editorLocked: boolean;
   sendingPresetId: string | null;
   sequenceRunning: boolean;
-  allowEmptyHexFrame: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -26,8 +25,22 @@ const emit = defineEmits<{
   remove: [preset: SendPreset];
   load: [preset: SendPreset];
   send: [preset: SendPreset];
+  "edit-frame": [preset: SendPreset];
   "toggle-sequence": [];
 }>();
+
+function hasIndependentFramePayload(preset: SendPreset): boolean {
+  const config = preset.frame_config;
+  return Boolean(config?.enabled && config.fields.some((field) => {
+    if (field.kind === "sequence" || field.kind === "length" || field.kind === "checksum") return true;
+    if (field.kind === "data" && field.source === "editor") return false;
+    return field.value.trim().length > 0;
+  }));
+}
+
+function canSendPreset(preset: SendPreset): boolean {
+  return preset.data.length > 0 || (preset.format === "hex" && hasIndependentFramePayload(preset));
+}
 
 function inputValue(event: Event): string {
   return (event.target as HTMLInputElement).value;
@@ -101,7 +114,7 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
           class="preset-sequence-button"
           :class="{ stop: sequenceRunning }"
           type="button"
-          :disabled="!sequenceRunning && (!connected || !presets.some((preset) => preset.enabled && (preset.data.length || (preset.format === 'hex' && allowEmptyHexFrame))))"
+          :disabled="!sequenceRunning && (!connected || !presets.some((preset) => preset.enabled && canSendPreset(preset)))"
           @click="emit('toggle-sequence')"
         >
           <Square v-if="sequenceRunning" :size="13" />
@@ -222,11 +235,22 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
                   <Download :size="15" />
                 </button>
                 <button
+                  class="preset-action frame"
+                  :class="{ active: preset.frame_config?.enabled }"
+                  type="button"
+                  :title="preset.frame_config?.enabled ? `编辑 HEX 帧（${preset.frame_config.fields.length} 字段）` : '配置该预设的 HEX 帧'"
+                  aria-label="编辑预设 HEX 帧"
+                  :disabled="editorLocked"
+                  @click="emit('edit-frame', preset)"
+                >
+                  <Settings :size="15" />
+                </button>
+                <button
                   class="preset-action send"
                   type="button"
                   title="立即发送"
                   aria-label="立即发送"
-                  :disabled="!connected || (!preset.data.length && !(preset.format === 'hex' && allowEmptyHexFrame)) || sendingPresetId !== null"
+                  :disabled="!connected || !canSendPreset(preset) || sendingPresetId !== null"
                   @click="emit('send', preset)"
                 >
                   <Send :size="15" />

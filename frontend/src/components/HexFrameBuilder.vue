@@ -15,6 +15,7 @@ const props = defineProps<{
   open: boolean;
   config: HexFrameConfig;
   editorData: string;
+  title?: string;
 }>();
 
 const emit = defineEmits<{
@@ -44,10 +45,7 @@ const addOptions: Array<{ label: string; create: () => HexFrameField }> = [
   { label: "帧序号", create: () => ({ id: fieldId(), kind: "sequence", name: "帧序号", byte_length: 1, value: "00", step: 1, byte_order: "big" }) },
   { label: "帧 ID", create: () => staticField("frame_id", "帧 ID", "00") },
   { label: "帧长度", create: () => ({ id: fieldId(), kind: "length", name: "帧长度", byte_length: 2, byte_order: "big", range_start_id: null, range_end_id: null }) },
-  ...([1, 2, 3, 4, 8] as const).map((length) => ({
-    label: `${length} Byte`,
-    create: (): HexFrameDataField => ({ id: fieldId(), kind: "data", name: `${length} Byte`, byte_length: length, source: "fixed", data_type: "hex", value: "00".repeat(length), byte_order: "big" }),
-  })),
+  { label: "定长数据", create: (): HexFrameDataField => ({ id: fieldId(), kind: "data", name: "定长数据", byte_length: 1, source: "fixed", data_type: "hex", value: "00", byte_order: "big" }) },
   { label: "任意字节", create: () => ({ id: fieldId(), kind: "data", name: "任意字节", byte_length: null, source: "editor", data_type: "hex", value: "", byte_order: "big" }) },
   { label: "CRC16", create: () => ({ id: fieldId(), kind: "checksum", name: "CRC16-MODBUS", parameters: crcPreset("modbus"), byte_order: "little", range_start_id: null, range_end_id: null }) },
   { label: "帧尾", create: () => staticField("tail", "帧尾", "0D 0A") },
@@ -73,7 +71,7 @@ watch(() => props.open, (open) => {
   draft.value = cloneFrameConfig(props.config);
   selectedId.value = draft.value.fields[0]?.id ?? null;
   schedulePreview();
-});
+}, { immediate: true });
 watch([draft, () => props.editorData], schedulePreview, { deep: true });
 
 function addField(create: () => HexFrameField): void {
@@ -196,6 +194,19 @@ function updateDataType(field: HexFrameDataField): void {
   if (field.data_type !== "hex" && field.source === "editor") field.source = "fixed";
 }
 
+function updateDataSource(field: HexFrameDataField): void {
+  if (field.source === "fixed" && field.byte_length === null) {
+    field.byte_length = 1;
+    if (!field.value) field.value = "00";
+  }
+}
+
+function updateDataLength(field: HexFrameDataField): void {
+  if (field.source !== "fixed" || field.data_type !== "hex" || field.byte_length === null) return;
+  const compact = field.value.replaceAll(/\s+/g, "");
+  if (/^(00)*$/i.test(compact)) field.value = "00".repeat(field.byte_length);
+}
+
 function staticField(kind: "header" | "frame_id" | "tail", name: string, value: string): HexFrameField {
   return { id: fieldId(), kind, name, value };
 }
@@ -291,7 +302,7 @@ function clearRangeReferences(id: string): void {
         <header class="dialog-header">
           <div>
             <span class="eyebrow">HEX FRAME</span>
-            <h2 id="frame-builder-title">HEX 帧格式编辑</h2>
+            <h2 id="frame-builder-title">{{ title || "HEX 帧格式编辑" }}</h2>
           </div>
           <button class="bar-icon-button" type="button" title="关闭" aria-label="关闭帧配置" @click="close"><X :size="18" /></button>
         </header>
@@ -368,9 +379,9 @@ function clearRangeReferences(id: string): void {
                   </template>
 
                   <template v-else-if="selectedField.kind === 'data'">
-                    <label class="field"><span>数据来源</span><select v-model="selectedField.source" :disabled="selectedField.data_type !== 'hex'"><option value="fixed">固定值</option><option value="editor">发送框数据</option></select></label>
+                    <label class="field"><span>数据来源</span><select v-model="selectedField.source" :disabled="selectedField.data_type !== 'hex'" @change="updateDataSource(selectedField)"><option value="fixed">固定值</option><option value="editor">发送框数据</option></select></label>
                     <label class="field"><span>数据类型</span><select v-model="selectedField.data_type" @change="updateDataType(selectedField)"><option value="hex">HEX 字节</option><option value="uint">无符号整数</option><option value="int">有符号整数</option><option value="float32">Float32</option><option value="float64">Float64</option></select></label>
-                    <label class="field"><span>字节长度</span><select v-model="selectedField.byte_length" :disabled="selectedField.data_type === 'float32' || selectedField.data_type === 'float64'"><option v-if="selectedField.data_type === 'hex'" :value="null">任意长度</option><option v-for="length in ([1, 2, 3, 4, 8] as FrameByteLength[])" :key="length" :value="length">{{ length }} Byte</option></select></label>
+                    <label class="field"><span>字节长度</span><select v-model="selectedField.byte_length" :disabled="selectedField.data_type === 'float32' || selectedField.data_type === 'float64'" @change="updateDataLength(selectedField)"><option v-if="selectedField.data_type === 'hex' && selectedField.source === 'editor'" :value="null">任意长度</option><option v-for="length in ([1, 2, 3, 4, 8] as FrameByteLength[])" :key="length" :value="length">{{ length }} Byte</option></select></label>
                     <label class="field"><span>字节顺序</span><select v-model="selectedField.byte_order"><option value="big">高字节在前</option><option value="little">低字节在前</option></select></label>
                     <label v-if="selectedField.source === 'fixed'" class="field span-2"><span>{{ selectedField.data_type === 'hex' ? 'HEX 值' : '数值' }}</span><input v-model="selectedField.value" class="mono-input" /></label>
                   </template>
