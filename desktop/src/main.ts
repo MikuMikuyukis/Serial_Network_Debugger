@@ -30,7 +30,11 @@ function createWindow(url: string): BrowserWindow {
     },
   });
 
-  window.once("ready-to-show", () => window.show());
+  const showWindow = (): void => {
+    if (!window.isDestroyed()) window.show();
+  };
+  window.once("ready-to-show", showWindow);
+  window.webContents.once("did-finish-load", showWindow);
   window.on("closed", () => {
     mainWindow = null;
   });
