@@ -4,12 +4,14 @@ import {
   loadActiveProfileId,
   loadConfigurationProfiles,
   loadHexFrameConfig,
+  loadFrameParserConfig,
   loadSendEditor,
   loadSendPresets,
   loadTransportSettings,
   removeConfigurationProfileData,
   saveActiveProfileId,
   saveHexFrameConfig,
+  saveFrameParserConfig,
   saveSendEditor,
   saveSendPresets,
   saveTransportSettings,
@@ -78,6 +80,16 @@ describe("frontend configuration profile storage", () => {
   it("复制配置时为预设和 HEX 帧生成独立标识", () => {
     const frame = frameConfig("source-frame");
     saveHexFrameConfig(frame, "source");
+    saveFrameParserConfig({
+      version: 1,
+      id: "source-parser",
+      name: "源解析",
+      enabled: true,
+      minimum_length: 2,
+      match_offset: 0,
+      match_hex: "AA 55",
+      fields: [],
+    }, "source");
     saveSendPresets([{ ...preset("source-preset", "AA"), format: "hex", frame_config: frame }], "source");
 
     copyConfigurationProfileData("source", "target");
@@ -88,6 +100,8 @@ describe("frontend configuration profile storage", () => {
     expect(targetPreset.id).not.toBe(sourcePreset.id);
     expect(targetPreset.frame_config?.id).not.toBe(sourcePreset.frame_config?.id);
     expect(loadHexFrameConfig("target").id).not.toBe(loadHexFrameConfig("source").id);
+    expect(loadFrameParserConfig("target")).toMatchObject({ name: "源解析", match_hex: "AA 55" });
+    expect(loadFrameParserConfig("target").id).not.toBe(loadFrameParserConfig("source").id);
   });
 
   it("只恢复配置列表中仍然存在的当前配置", () => {
@@ -109,6 +123,7 @@ describe("frontend configuration profile storage", () => {
     removeConfigurationProfileData("default");
 
     expect(loadSendEditor("default").data).toBe("");
+    expect(loadFrameParserConfig("default").enabled).toBe(false);
   });
 });
 

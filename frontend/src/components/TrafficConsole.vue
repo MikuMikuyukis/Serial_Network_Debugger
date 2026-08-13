@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Eraser, PanelRight, Pause, Play, Repeat, Send, Settings, Square } from "@lucide/vue";
+import { Activity, Eraser, List, PanelRight, Pause, Play, Repeat, Send, Settings, Square } from "@lucide/vue";
 import { apiRequest } from "../api";
 import {
   compactHexDisplay,
@@ -26,6 +26,7 @@ import type {
   LogItem,
   PeriodicSendRequest,
   PeriodicSendStatus,
+  ReceivedFrame,
   SendPayload,
   SendPreset,
   SendPresetDraft,
@@ -34,12 +35,14 @@ import type {
 import SendPresetPanel from "./SendPresetPanel.vue";
 import HexFrameBuilder from "./HexFrameBuilder.vue";
 import FrameGeneratedControls from "./FrameGeneratedControls.vue";
+import FrameAnalyzer from "./FrameAnalyzer.vue";
 import VirtualLog from "./VirtualLog.vue";
 
 const props = defineProps<{
   profileId: string;
   connected: boolean;
   logs: LogItem[];
+  receivedFrames: ReceivedFrame[];
   paused: boolean;
   periodicStatus: PeriodicSendStatus;
 }>();
@@ -53,6 +56,7 @@ const emit = defineEmits<{
 
 const displayHex = ref(false);
 const autoScroll = ref(true);
+const workspaceView = ref<"logs" | "analysis">("logs");
 const storedEditor = loadSendEditor(props.profileId);
 const format = ref<DataFormat>(storedEditor.format);
 const textEncoding = ref<TextEncoding>(storedEditor.text_encoding);
@@ -602,22 +606,26 @@ function emitError(error: unknown, fallback: string): void {
 </script>
 
 <template>
-  <section class="console-area">
-    <div class="console-toolbar">
-      <div>
-        <span class="eyebrow">LIVE TRAFFIC</span>
-        <h2>通信日志</h2>
-      </div>
-      <div class="toolbar-actions">
-        <label class="toggle">
-          <input v-model="displayHex" type="checkbox" />
-          <span>HEX 显示</span>
-        </label>
-        <label class="toggle">
-          <input v-model="autoScroll" type="checkbox" />
-          <span>自动滚动</span>
+    <section class="console-area">
+      <div class="console-toolbar">
+        <div class="console-view-heading">
+          <span class="eyebrow">WORKSPACE</span>
+          <div class="console-view-tabs" role="tablist" aria-label="工作视图">
+            <button type="button" :class="{ active: workspaceView === 'logs' }" @click="workspaceView = 'logs'"><List :size="15" />通信日志</button>
+            <button type="button" :class="{ active: workspaceView === 'analysis' }" @click="workspaceView = 'analysis'"><Activity :size="15" />数据分析</button>
+          </div>
+        </div>
+        <div class="toolbar-actions">
+          <label v-if="workspaceView === 'logs'" class="toggle">
+            <input v-model="displayHex" type="checkbox" />
+            <span>HEX 显示</span>
+          </label>
+          <label v-if="workspaceView === 'logs'" class="toggle">
+            <input v-model="autoScroll" type="checkbox" />
+            <span>自动滚动</span>
         </label>
         <button
+          v-if="workspaceView === 'logs'"
           class="icon-tool-button"
           :class="{ active: presetsOpen }"
           type="button"
@@ -637,14 +645,15 @@ function emitError(error: unknown, fallback: string): void {
           <Play v-if="paused" :size="16" />
           <Pause v-else :size="16" />
         </button>
-        <button class="icon-tool-button" type="button" title="清空日志" aria-label="清空日志" @click="emit('clear')">
+        <button v-if="workspaceView === 'logs'" class="icon-tool-button" type="button" title="清空日志" aria-label="清空日志" @click="emit('clear')">
           <Eraser :size="16" />
         </button>
       </div>
     </div>
 
     <div class="traffic-workspace" :class="{ 'presets-open': presetsOpen }">
-      <VirtualLog :logs="logs" :display-hex="displayHex" :auto-scroll="autoScroll" />
+      <VirtualLog v-show="workspaceView === 'logs'" :logs="logs" :display-hex="displayHex" :auto-scroll="autoScroll" />
+      <FrameAnalyzer v-show="workspaceView === 'analysis'" :profile-id="profileId" :frames="receivedFrames" @error="emit('error', $event)" />
       <SendPresetPanel
         :presets="presets"
         :preset-frame-previews="presetFramePreviews"

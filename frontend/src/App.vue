@@ -29,6 +29,7 @@ const {
   status,
   periodicStatus,
   logs,
+  receivedFrames,
   paused,
   eventsConnected,
   applyStatus,
@@ -105,6 +106,7 @@ onMounted(async () => {
         v-model:paused="paused"
         :connected="status.connected"
         :logs="logs"
+        :received-frames="receivedFrames"
         :periodic-status="periodicStatus"
         @clear="clearLogs"
         @error="showToast"

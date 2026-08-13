@@ -2,6 +2,10 @@ import type {
   SerialConfig,
   HexFrameField,
   HexFrameConfig,
+  FrameParserConfig,
+  FrameParserDataType,
+  FrameParserDisplay,
+  FrameParserField,
   SendEditorDraft,
   SendPreset,
   TcpClientConfig,
@@ -33,6 +37,7 @@ const THEME_KEY = "snd.theme";
 const SEND_PRESETS_KEY = "snd.send-presets.v1";
 const SEND_EDITOR_KEY = "snd.send-editor.v1";
 const HEX_FRAME_CONFIG_KEY = "snd.hex-frame-config.v1";
+const FRAME_PARSER_CONFIG_KEY = "snd.frame-parser-config.v1";
 const PROFILES_KEY = "snd.configuration-profiles.v1";
 const ACTIVE_PROFILE_KEY = "snd.active-configuration-profile.v1";
 const DEFAULT_PROFILE_ID = "default";
@@ -43,6 +48,17 @@ export const DEFAULT_HEX_FRAME_CONFIG: HexFrameConfig = {
   version: 1,
   id: "default-frame",
   enabled: false,
+  fields: [],
+};
+
+export const DEFAULT_FRAME_PARSER_CONFIG: FrameParserConfig = {
+  version: 1,
+  id: "default-parser",
+  name: "接收帧解析",
+  enabled: false,
+  minimum_length: 0,
+  match_offset: 0,
+  match_hex: "",
   fields: [],
 };
 
@@ -138,10 +154,12 @@ export function copyConfigurationProfileData(sourceProfileId: string, targetProf
       ? { frame_config: cloneFrameConfigWithNewId(preset.frame_config, `preset-${targetProfileId}`) }
       : {}),
   })), targetProfileId);
+  const parserConfig = loadFrameParserConfig(sourceProfileId);
+  saveFrameParserConfig({ ...structuredClone(parserConfig), id: `parser-${createStorageId()}`.slice(0, 80) }, targetProfileId);
 }
 
 export function removeConfigurationProfileData(profileId: string): void {
-  for (const key of [SETTINGS_KEY, SEND_PRESETS_KEY, SEND_EDITOR_KEY, HEX_FRAME_CONFIG_KEY]) {
+  for (const key of [SETTINGS_KEY, SEND_PRESETS_KEY, SEND_EDITOR_KEY, HEX_FRAME_CONFIG_KEY, FRAME_PARSER_CONFIG_KEY]) {
     localStorage.removeItem(profileStorageKey(key, profileId));
     if (profileId === DEFAULT_PROFILE_ID) localStorage.removeItem(key);
   }
@@ -255,6 +273,19 @@ export function saveHexFrameConfig(config: HexFrameConfig, profileId = DEFAULT_P
   localStorage.setItem(profileStorageKey(HEX_FRAME_CONFIG_KEY, profileId), JSON.stringify(config));
 }
 
+export function loadFrameParserConfig(profileId = DEFAULT_PROFILE_ID): FrameParserConfig {
+  try {
+    const stored = JSON.parse(readProfileItem(FRAME_PARSER_CONFIG_KEY, profileId) ?? "null") as unknown;
+    return normalizeFrameParserConfig(stored) ?? structuredClone(DEFAULT_FRAME_PARSER_CONFIG);
+  } catch {
+    return structuredClone(DEFAULT_FRAME_PARSER_CONFIG);
+  }
+}
+
+export function saveFrameParserConfig(config: FrameParserConfig, profileId = DEFAULT_PROFILE_ID): void {
+  localStorage.setItem(profileStorageKey(FRAME_PARSER_CONFIG_KEY, profileId), JSON.stringify(config));
+}
+
 function profileStorageKey(baseKey: string, profileId: string): string {
   return `snd.profile.${encodeURIComponent(profileId)}.${baseKey.slice(4)}`;
 }
@@ -288,6 +319,67 @@ function normalizeConfigurationProfile(value: unknown): ConfigurationProfile | n
     created_at: profile.created_at,
     updated_at: profile.updated_at,
   };
+}
+
+function normalizeFrameParserConfig(value: unknown): FrameParserConfig | null {
+  if (!value || typeof value !== "object") return null;
+  const config = value as Partial<FrameParserConfig>;
+  if (config.version !== 1
+    || !isBoundedString(config.id, 1, 80)
+    || !isBoundedString(config.name, 1, 60)
+    || typeof config.enabled !== "boolean"
+    || !isIntegerInRange(config.minimum_length, 0, 65_535)
+    || !isIntegerInRange(config.match_offset, 0, 65_535)
+    || !isBoundedString(config.match_hex, 0, 131_070)
+    || !Array.isArray(config.fields)
+    || config.fields.length > 32) return null;
+  const fields = config.fields.map(normalizeFrameParserField);
+  if (fields.some((field) => field === null)) return null;
+  const normalizedFields = fields as FrameParserField[];
+  if (new Set(normalizedFields.map((field) => field.id)).size !== normalizedFields.length) return null;
+  return {
+    version: 1,
+    id: config.id,
+    name: config.name,
+    enabled: config.enabled,
+    minimum_length: config.minimum_length,
+    match_offset: config.match_offset,
+    match_hex: config.match_hex,
+    fields: normalizedFields,
+  };
+}
+
+function normalizeFrameParserField(value: unknown): FrameParserField | null {
+  if (!value || typeof value !== "object") return null;
+  const field = value as Partial<FrameParserField>;
+  if (!isBoundedString(field.id, 1, 80)
+    || !isBoundedString(field.name, 1, 60)
+    || !isIntegerInRange(field.offset, 0, 65_535)
+    || !isIntegerInRange(field.byte_length, 1, 64)
+    || !isFrameParserDataType(field.data_type)
+    || !isByteOrder(field.byte_order)
+    || !isIntegerInRange(field.bit_index, 0, 511)
+    || !isFiniteNumber(field.scale)
+    || !isFiniteNumber(field.value_offset)
+    || !isIntegerInRange(field.decimals, 0, 8)
+    || !isBoundedString(field.unit, 0, 20)
+    || typeof field.visible !== "boolean"
+    || !isFrameParserDisplay(field.display)
+    || !isFiniteNumber(field.minimum)
+    || !isFiniteNumber(field.maximum)
+    || field.minimum >= field.maximum
+    || typeof field.color !== "string"
+    || !/^#[0-9A-F]{6}$/i.test(field.color)) return null;
+  return field as FrameParserField;
+}
+
+function isFrameParserDataType(value: unknown): value is FrameParserDataType {
+  return value === "uint" || value === "int" || value === "float32" || value === "float64"
+    || value === "bcd" || value === "boolean" || value === "hex" || value === "ascii";
+}
+
+function isFrameParserDisplay(value: unknown): value is FrameParserDisplay {
+  return value === "number" || value === "gauge" || value === "trend" || value === "bar" || value === "status";
 }
 
 function normalizeHexFrameConfig(value: unknown): HexFrameConfig | null {
