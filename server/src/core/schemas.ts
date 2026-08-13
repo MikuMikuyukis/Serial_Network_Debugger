@@ -3,6 +3,85 @@ import { z } from "zod";
 const trimmedHost = z.string().trim().min(1).max(253);
 const port = z.number().int().min(1).max(65_535);
 const bindPort = z.number().int().min(0).max(65_535);
+const frameFieldId = z.string().min(1).max(80);
+const frameFieldName = z.string().max(60);
+const hexString = z.string().max(2_097_152);
+const byteOrder = z.enum(["big", "little"]);
+const frameByteLength = z.union([
+  z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(8),
+]);
+const frameRange = {
+  range_start_id: frameFieldId.nullable().default(null),
+  range_end_id: frameFieldId.nullable().default(null),
+};
+
+const staticFrameFieldSchema = z.object({
+  id: frameFieldId,
+  name: frameFieldName,
+  kind: z.enum(["header", "frame_id", "tail"]),
+  value: hexString,
+});
+
+const sequenceFrameFieldSchema = z.object({
+  id: frameFieldId,
+  name: frameFieldName,
+  kind: z.literal("sequence"),
+  byte_length: frameByteLength,
+  value: hexString,
+  step: z.number().int().min(1).max(65_535),
+  byte_order: byteOrder,
+});
+
+const lengthFrameFieldSchema = z.object({
+  id: frameFieldId,
+  name: frameFieldName,
+  kind: z.literal("length"),
+  byte_length: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+  byte_order: byteOrder,
+  ...frameRange,
+});
+
+const dataFrameFieldSchema = z.object({
+  id: frameFieldId,
+  name: frameFieldName,
+  kind: z.literal("data"),
+  byte_length: frameByteLength.nullable(),
+  source: z.enum(["fixed", "editor"]),
+  data_type: z.enum(["hex", "uint", "int", "float32", "float64"]),
+  value: hexString,
+  byte_order: byteOrder,
+});
+
+const crc16ParametersSchema = z.object({
+  preset: z.enum(["modbus", "arc", "ccitt_false", "xmodem", "x25", "kermit", "custom"]),
+  polynomial: z.string().min(1).max(6),
+  initial: z.string().min(1).max(6),
+  xor_out: z.string().min(1).max(6),
+  reflect_input: z.boolean(),
+  reflect_output: z.boolean(),
+});
+
+const checksumFrameFieldSchema = z.object({
+  id: frameFieldId,
+  name: frameFieldName,
+  kind: z.literal("checksum"),
+  parameters: crc16ParametersSchema,
+  byte_order: byteOrder,
+  ...frameRange,
+});
+
+export const hexFrameConfigSchema = z.object({
+  version: z.literal(1),
+  id: z.string().min(1).max(80),
+  enabled: z.boolean(),
+  fields: z.discriminatedUnion("kind", [
+    staticFrameFieldSchema,
+    sequenceFrameFieldSchema,
+    lengthFrameFieldSchema,
+    dataFrameFieldSchema,
+    checksumFrameFieldSchema,
+  ]).array().max(64),
+});
 
 export const serialConfigSchema = z.object({
   mode: z.literal("serial"),
@@ -52,8 +131,14 @@ export const sendRequestSchema = z.object({
   format: z.enum(["text", "hex"]).default("text"),
   text_encoding: z.enum(["utf-8", "ascii", "gbk"]).default("utf-8"),
   line_ending: z.enum(["none", "cr", "lf", "crlf"]).default("none"),
+  frame_config: hexFrameConfigSchema.optional(),
 });
 
 export const periodicSendRequestSchema = sendRequestSchema.extend({
   interval_ms: z.number().int().min(10).max(86_400_000),
+});
+
+export const hexFramePreviewSchema = z.object({
+  data: hexString,
+  frame_config: hexFrameConfigSchema,
 });

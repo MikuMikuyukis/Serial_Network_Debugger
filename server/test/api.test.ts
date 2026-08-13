@@ -3,6 +3,8 @@ import net from "node:net";
 import { WebSocket } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/http/app.js";
+import type { HexFrameConfig } from "../src/core/types.js";
+import { waitForSocketData } from "./helpers.js";
 
 const apps: Awaited<ReturnType<typeof createApp>>[] = [];
 afterEach(async () => {
@@ -146,4 +148,114 @@ describe("HTTP and WebSocket API", () => {
     expect(stopped.active).toBe(false);
     client.destroy();
   });
+
+  it("HEX 帧预览等于实际发送字节，失败发送不递增序号", async () => {
+    const app = await makeApp();
+    const frameConfig = sequenceFrameConfig("api-manual-frame", "20");
+    const payload = {
+      data: "A1 B2",
+      format: "hex",
+      text_encoding: "utf-8",
+      line_ending: "none",
+      frame_config: frameConfig,
+    };
+
+    const preview = await app.inject({ method: "POST", url: "/api/frame/preview", payload: { data: payload.data, frame_config: frameConfig } });
+    expect(preview.statusCode).toBe(200);
+    const previewBody = preview.json() as { hex: string };
+
+    const connected = await app.inject({
+      method: "POST",
+      url: "/api/connect",
+      payload: { mode: "tcp_server", host: "127.0.0.1", port: 0 },
+    });
+    const port = (connected.json() as { details: { port: number } }).details.port;
+
+    const failed = await app.inject({ method: "POST", url: "/api/send", payload });
+    expect(failed.statusCode).toBe(400);
+
+    const client = net.createConnection(port, "127.0.0.1");
+    await new Promise<void>((resolve, reject) => {
+      client.once("connect", resolve);
+      client.once("error", reject);
+    });
+
+    const firstData = waitForSocketData(client);
+    const first = await app.inject({ method: "POST", url: "/api/send", payload });
+    expect(first.statusCode).toBe(200);
+    expect((await firstData).toString("hex").toUpperCase()).toBe(previewBody.hex.replaceAll(" ", ""));
+    expect(first.json()).toMatchObject({ frame_sequences: { sequence: "21" } });
+
+    const secondData = waitForSocketData(client);
+    const second = await app.inject({ method: "POST", url: "/api/send", payload });
+    expect(second.statusCode).toBe(200);
+    expect((await secondData).subarray(1, 2).toString("hex").toUpperCase()).toBe("21");
+    expect(second.json()).toMatchObject({ frame_sequences: { sequence: "22" } });
+    client.destroy();
+  });
+
+  it("周期 HEX 发送每次递增序号并公开最新序号", async () => {
+    const app = await makeApp();
+    const connected = await app.inject({
+      method: "POST",
+      url: "/api/connect",
+      payload: { mode: "tcp_server", host: "127.0.0.1", port: 0 },
+    });
+    const port = (connected.json() as { details: { port: number } }).details.port;
+    const client = net.createConnection(port, "127.0.0.1");
+    await new Promise<void>((resolve, reject) => {
+      client.once("connect", resolve);
+      client.once("error", reject);
+    });
+    const received: number[] = [];
+    client.on("data", (data) => received.push(...data));
+
+    const started = await app.inject({
+      method: "POST",
+      url: "/api/periodic-send/start",
+      payload: {
+        data: "",
+        format: "hex",
+        text_encoding: "utf-8",
+        line_ending: "none",
+        interval_ms: 20,
+        frame_config: sequenceFrameConfig("api-periodic-frame", "30", false),
+      },
+    });
+    expect(started.statusCode).toBe(200);
+    expect(started.json()).toMatchObject({ sent_count: 1, frame_sequences: { sequence: "31" } });
+
+    await waitUntil(() => received.length >= 3);
+    const status = await app.inject({ method: "GET", url: "/api/periodic-send" });
+    const statusBody = status.json() as { sent_count: number; frame_sequences: Record<string, string> };
+    expect(received.slice(0, 3)).toEqual([0x30, 0x31, 0x32]);
+    expect(statusBody.sent_count).toBeGreaterThanOrEqual(3);
+    expect(Number.parseInt(statusBody.frame_sequences.sequence!, 16)).toBeGreaterThanOrEqual(0x33);
+
+    await app.inject({ method: "POST", url: "/api/periodic-send/stop" });
+    client.destroy();
+  });
 });
+
+function sequenceFrameConfig(id: string, sequence: string, includeEditorData = true): HexFrameConfig {
+  return {
+    version: 1,
+    id,
+    enabled: true,
+    fields: [
+      { id: "header", kind: "header", name: "帧头", value: includeEditorData ? "7E" : "" },
+      { id: "sequence", kind: "sequence", name: "序号", byte_length: 1, value: sequence, step: 1, byte_order: "big" },
+      ...(includeEditorData
+        ? [{ id: "data", kind: "data", name: "数据", byte_length: null, source: "editor", data_type: "hex", value: "", byte_order: "big" } as const]
+        : []),
+    ],
+  };
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("等待测试条件超时");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}

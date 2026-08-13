@@ -16,6 +16,7 @@ defineProps<{
   editorLocked: boolean;
   sendingPresetId: string | null;
   sequenceRunning: boolean;
+  allowEmptyHexFrame: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -100,7 +101,7 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
           class="preset-sequence-button"
           :class="{ stop: sequenceRunning }"
           type="button"
-          :disabled="!sequenceRunning && (!connected || !presets.some((preset) => preset.enabled && preset.data.length))"
+          :disabled="!sequenceRunning && (!connected || !presets.some((preset) => preset.enabled && (preset.data.length || (preset.format === 'hex' && allowEmptyHexFrame))))"
           @click="emit('toggle-sequence')"
         >
           <Square v-if="sequenceRunning" :size="13" />
@@ -225,7 +226,7 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
                   type="button"
                   title="立即发送"
                   aria-label="立即发送"
-                  :disabled="!connected || !preset.data.length || sendingPresetId !== null"
+                  :disabled="!connected || (!preset.data.length && !(preset.format === 'hex' && allowEmptyHexFrame)) || sendingPresetId !== null"
                   @click="emit('send', preset)"
                 >
                   <Send :size="15" />

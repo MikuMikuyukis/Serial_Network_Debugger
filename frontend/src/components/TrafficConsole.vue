@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Eraser, PanelRight, Pause, Play, Repeat, Send, Square } from "@lucide/vue";
+import { Eraser, PanelRight, Pause, Play, Repeat, Send, Settings, Square } from "@lucide/vue";
 import { apiRequest } from "../api";
 import {
   compactHexDisplay,
@@ -11,13 +11,16 @@ import {
 } from "../hex-display";
 import {
   loadSendEditor,
+  loadHexFrameConfig,
   loadSendPresets,
   MAX_SEND_PRESETS,
   saveSendEditor,
+  saveHexFrameConfig,
   saveSendPresets,
 } from "../storage";
 import type {
   DataFormat,
+  HexFrameConfig,
   LineEnding,
   LogItem,
   PeriodicSendRequest,
@@ -28,6 +31,7 @@ import type {
   TextEncoding,
 } from "../types";
 import SendPresetPanel from "./SendPresetPanel.vue";
+import HexFrameBuilder from "./HexFrameBuilder.vue";
 import VirtualLog from "./VirtualLog.vue";
 
 const props = defineProps<{
@@ -51,6 +55,8 @@ const format = ref<DataFormat>(storedEditor.format);
 const textEncoding = ref<TextEncoding>(storedEditor.text_encoding);
 const lineEnding = ref<LineEnding>(storedEditor.line_ending);
 const sendData = ref(storedEditor.data);
+const frameConfig = ref<HexFrameConfig>(loadHexFrameConfig());
+const frameBuilderOpen = ref(false);
 const intervalMs = ref(storedEditor.interval_ms);
 const sending = ref(false);
 const changingPeriodic = ref(false);
@@ -73,7 +79,16 @@ const editorPayload = computed<SendPayload>(() => ({
   format: format.value,
   text_encoding: textEncoding.value,
   line_ending: lineEnding.value,
+  ...(format.value === "hex" && frameConfig.value.enabled
+    ? { frame_config: frameConfig.value }
+    : {}),
 }));
+const hasIndependentFramePayload = computed(() => frameConfig.value.enabled && frameConfig.value.fields.some((field) => {
+  if (field.kind === "sequence" || field.kind === "length" || field.kind === "checksum") return true;
+  if (field.kind === "data" && field.source === "editor") return false;
+  return field.value.trim().length > 0;
+}));
+const canSendEditor = computed(() => sendData.value.length > 0 || (format.value === "hex" && hasIndependentFramePayload.value));
 
 watch(format, (value) => {
   if (value === "hex") displayHex.value = true;
@@ -82,6 +97,7 @@ watch([sendData, format, textEncoding, lineEnding, intervalMs], scheduleEditorSa
 watch(() => props.periodicStatus.interval_ms, (value) => {
   if (value !== null) intervalMs.value = value;
 });
+watch(() => props.periodicStatus.frame_sequences, applyFrameSequences, { deep: true });
 onMounted(() => window.addEventListener("beforeunload", persistPendingState));
 onBeforeUnmount(() => {
   sequenceGeneration += 1;
@@ -92,10 +108,18 @@ onBeforeUnmount(() => {
 });
 
 async function sendPayload(payload: SendPayload): Promise<void> {
-  await apiRequest<{ ok: boolean; message: string }>("/api/send", {
+  const request: SendPayload = payload.format === "hex" && frameConfig.value.enabled
+    ? { ...payload, frame_config: frameConfig.value }
+    : payload;
+  const response = await apiRequest<{
+    ok: boolean;
+    message: string;
+    frame_sequences: Record<string, string> | null;
+  }>("/api/send", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify(request),
   });
+  applyFrameSequences(response.frame_sequences);
 }
 
 async function send(): Promise<void> {
@@ -138,7 +162,7 @@ async function togglePeriodic(): Promise<void> {
 function handleSendShortcut(event: KeyboardEvent): void {
   if (event.key !== "Enter" || !event.ctrlKey) return;
   event.preventDefault();
-  if (props.connected && !sending.value) void send();
+  if (props.connected && !sending.value && canSendEditor.value) void send();
 }
 
 function handleSendEditorKeydown(event: KeyboardEvent): void {
@@ -181,6 +205,31 @@ function loadPreset(preset: SendPreset): void {
   format.value = preset.format;
   textEncoding.value = preset.text_encoding;
   lineEnding.value = preset.line_ending;
+}
+
+function applyFrameConfig(config: HexFrameConfig): void {
+  frameConfig.value = config;
+  try {
+    saveHexFrameConfig(config);
+  } catch {
+    emit("error", "HEX 帧配置保存失败，请检查浏览器本地存储空间");
+  }
+}
+
+function canSendPreset(preset: SendPreset): boolean {
+  return preset.data.length > 0 || (preset.format === "hex" && hasIndependentFramePayload.value);
+}
+
+function applyFrameSequences(sequences: Record<string, string> | null): void {
+  if (!sequences) return;
+  let changed = false;
+  const fields = frameConfig.value.fields.map((field) => {
+    if (field.kind !== "sequence" || sequences[field.id] === undefined) return field;
+    changed = true;
+    return { ...field, value: sequences[field.id]! };
+  });
+  if (!changed) return;
+  applyFrameConfig({ ...frameConfig.value, fields });
 }
 
 async function sendPreset(preset: SendPreset): Promise<void> {
@@ -235,7 +284,7 @@ async function toggleSequence(): Promise<void> {
     sendingPresetId.value = null;
     return;
   }
-  const queue = presets.value.filter((preset) => preset.enabled && preset.data.length > 0);
+  const queue = presets.value.filter((preset) => preset.enabled && canSendPreset(preset));
   if (!props.connected || queue.length === 0) return;
   const generation = ++sequenceGeneration;
   sequenceRunning.value = true;
@@ -370,6 +419,7 @@ function emitError(error: unknown, fallback: string): void {
         :editor-locked="periodicStatus.active"
         :sending-preset-id="sendingPresetId"
         :sequence-running="sequenceRunning"
+        :allow-empty-hex-frame="hasIndependentFramePayload"
         @close="presetsOpen = false"
         @add="addPreset"
         @update="updatePreset"
@@ -386,6 +436,17 @@ function emitError(error: unknown, fallback: string): void {
           <label><input v-model="format" type="radio" value="text" :disabled="periodicStatus.active" /><span>文本</span></label>
           <label><input v-model="format" type="radio" value="hex" :disabled="periodicStatus.active" /><span>HEX</span></label>
         </div>
+        <button
+          v-if="format === 'hex'"
+          class="frame-config-button"
+          :class="{ active: frameConfig.enabled }"
+          type="button"
+          :disabled="periodicStatus.active"
+          @click="frameBuilderOpen = true"
+        >
+          <Settings :size="14" />
+          <span>{{ frameConfig.enabled ? `帧配置 · ${frameConfig.fields.length}` : "帧配置" }}</span>
+        </button>
         <label class="compact-field">
           <span>编码</span>
           <select v-model="textEncoding" :disabled="format === 'hex' || periodicStatus.active">
@@ -415,7 +476,7 @@ function emitError(error: unknown, fallback: string): void {
             class="periodic-button"
             :class="{ stop: periodicStatus.active }"
             type="button"
-            :disabled="changingPeriodic || (!periodicStatus.active && (!connected || !sendData.length || intervalMs < 10 || intervalMs > 86400000))"
+            :disabled="changingPeriodic || (!periodicStatus.active && (!connected || !canSendEditor || intervalMs < 10 || intervalMs > 86400000))"
             @click="togglePeriodic"
           >
             <Square v-if="periodicStatus.active" :size="13" />
@@ -434,11 +495,18 @@ function emitError(error: unknown, fallback: string): void {
           @input="updateSendData"
           @keydown="handleSendEditorKeydown"
         ></textarea>
-        <button class="button button-send" type="submit" :disabled="sending || !connected || !sendData.length">
+        <button class="button button-send" type="submit" :disabled="sending || !connected || !canSendEditor">
           <Send :size="17" />
           <span>发送</span>
         </button>
       </div>
     </form>
+    <HexFrameBuilder
+      v-model:open="frameBuilderOpen"
+      :config="frameConfig"
+      :editor-data="sendData"
+      @apply="applyFrameConfig"
+      @error="emit('error', $event)"
+    />
   </section>
 </template>

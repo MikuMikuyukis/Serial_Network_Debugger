@@ -1,5 +1,7 @@
 import type {
   SerialConfig,
+  HexFrameField,
+  HexFrameConfig,
   SendEditorDraft,
   SendPreset,
   TcpClientConfig,
@@ -23,7 +25,15 @@ const SETTINGS_KEY = "snd.transport-settings.v1";
 const THEME_KEY = "snd.theme";
 const SEND_PRESETS_KEY = "snd.send-presets.v1";
 const SEND_EDITOR_KEY = "snd.send-editor.v1";
+const HEX_FRAME_CONFIG_KEY = "snd.hex-frame-config.v1";
 export const MAX_SEND_PRESETS = 100;
+
+export const DEFAULT_HEX_FRAME_CONFIG: HexFrameConfig = {
+  version: 1,
+  id: "default-frame",
+  enabled: false,
+  fields: [],
+};
 
 export const DEFAULT_SEND_EDITOR: SendEditorDraft = {
   version: 1,
@@ -160,6 +170,142 @@ export function loadSendEditor(): SendEditorDraft {
 
 export function saveSendEditor(editor: SendEditorDraft): void {
   localStorage.setItem(SEND_EDITOR_KEY, JSON.stringify(editor));
+}
+
+export function loadHexFrameConfig(): HexFrameConfig {
+  try {
+    const stored = JSON.parse(localStorage.getItem(HEX_FRAME_CONFIG_KEY) ?? "null") as unknown;
+    return normalizeHexFrameConfig(stored) ?? structuredClone(DEFAULT_HEX_FRAME_CONFIG);
+  } catch {
+    return structuredClone(DEFAULT_HEX_FRAME_CONFIG);
+  }
+}
+
+export function saveHexFrameConfig(config: HexFrameConfig): void {
+  localStorage.setItem(HEX_FRAME_CONFIG_KEY, JSON.stringify(config));
+}
+
+function normalizeHexFrameConfig(value: unknown): HexFrameConfig | null {
+  if (!value || typeof value !== "object") return null;
+  const config = value as Partial<HexFrameConfig>;
+  if (config.version !== 1 || !isBoundedString(config.id, 1, 80)) return null;
+  if (typeof config.enabled !== "boolean" || !Array.isArray(config.fields)) return null;
+  if (config.fields.length > 64) return null;
+  const fields = config.fields.map(normalizeHexFrameField);
+  if (fields.some((field) => field === null)) return null;
+  const normalizedFields = fields as HexFrameField[];
+  const ids = new Set(normalizedFields.map((field) => field.id));
+  if (ids.size !== normalizedFields.length) return null;
+  for (const field of normalizedFields) {
+    if (field.kind !== "length" && field.kind !== "checksum") continue;
+    if (field.range_start_id !== null && !ids.has(field.range_start_id)) return null;
+    if (field.range_end_id !== null && !ids.has(field.range_end_id)) return null;
+  }
+  return { version: 1, id: config.id, enabled: config.enabled, fields: normalizedFields };
+}
+
+function normalizeHexFrameField(value: unknown): HexFrameField | null {
+  if (!value || typeof value !== "object") return null;
+  const field = value as Record<string, unknown>;
+  if (!isBoundedString(field.id, 1, 80) || !isBoundedString(field.name, 0, 60)) return null;
+  const base = { id: field.id, name: field.name };
+  if (field.kind === "header" || field.kind === "frame_id" || field.kind === "tail") {
+    return isBoundedString(field.value, 0, 2_097_152)
+      ? { ...base, kind: field.kind, value: field.value }
+      : null;
+  }
+  if (field.kind === "sequence") {
+    return isFrameByteLength(field.byte_length)
+      && isBoundedString(field.value, 0, 2_097_152)
+      && isIntegerInRange(field.step, 1, 65_535)
+      && isByteOrder(field.byte_order)
+      ? { ...base, kind: field.kind, byte_length: field.byte_length, value: field.value, step: field.step, byte_order: field.byte_order }
+      : null;
+  }
+  if (field.kind === "length") {
+    return isIntegerInRange(field.byte_length, 1, 4)
+      && isByteOrder(field.byte_order)
+      && isFrameRangeId(field.range_start_id)
+      && isFrameRangeId(field.range_end_id)
+      ? { ...base, kind: field.kind, byte_length: field.byte_length as 1 | 2 | 3 | 4, byte_order: field.byte_order, range_start_id: field.range_start_id, range_end_id: field.range_end_id }
+      : null;
+  }
+  if (field.kind === "data") {
+    const byteLength = field.byte_length;
+    const source = field.source;
+    const dataType = field.data_type;
+    return (byteLength === null || isFrameByteLength(byteLength))
+      && isDataSource(source)
+      && isFrameDataType(dataType)
+      && isBoundedString(field.value, 0, 2_097_152)
+      && isByteOrder(field.byte_order)
+      ? { ...base, kind: field.kind, byte_length: byteLength, source, data_type: dataType, value: field.value, byte_order: field.byte_order }
+      : null;
+  }
+  if (field.kind === "checksum") {
+    const parameters = field.parameters;
+    if (!parameters || typeof parameters !== "object") return null;
+    const crc = parameters as Record<string, unknown>;
+    const preset = crc.preset;
+    return isCrcPreset(preset)
+      && isBoundedString(crc.polynomial, 1, 6)
+      && isBoundedString(crc.initial, 1, 6)
+      && isBoundedString(crc.xor_out, 1, 6)
+      && typeof crc.reflect_input === "boolean"
+      && typeof crc.reflect_output === "boolean"
+      && isByteOrder(field.byte_order)
+      && isFrameRangeId(field.range_start_id)
+      && isFrameRangeId(field.range_end_id)
+      ? {
+          ...base,
+          kind: field.kind,
+          parameters: {
+            preset,
+            polynomial: crc.polynomial,
+            initial: crc.initial,
+            xor_out: crc.xor_out,
+            reflect_input: crc.reflect_input,
+            reflect_output: crc.reflect_output,
+          },
+          byte_order: field.byte_order,
+          range_start_id: field.range_start_id,
+          range_end_id: field.range_end_id,
+        }
+      : null;
+  }
+  return null;
+}
+
+function isBoundedString(value: unknown, minimum: number, maximum: number): value is string {
+  return typeof value === "string" && value.length >= minimum && value.length <= maximum;
+}
+
+function isIntegerInRange(value: unknown, minimum: number, maximum: number): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= minimum && value <= maximum;
+}
+
+function isFrameByteLength(value: unknown): value is 1 | 2 | 3 | 4 | 8 {
+  return value === 1 || value === 2 || value === 3 || value === 4 || value === 8;
+}
+
+function isByteOrder(value: unknown): value is "big" | "little" {
+  return value === "big" || value === "little";
+}
+
+function isDataSource(value: unknown): value is "fixed" | "editor" {
+  return value === "fixed" || value === "editor";
+}
+
+function isFrameDataType(value: unknown): value is "hex" | "uint" | "int" | "float32" | "float64" {
+  return value === "hex" || value === "uint" || value === "int" || value === "float32" || value === "float64";
+}
+
+function isCrcPreset(value: unknown): value is "modbus" | "arc" | "ccitt_false" | "xmodem" | "x25" | "kermit" | "custom" {
+  return value === "modbus" || value === "arc" || value === "ccitt_false" || value === "xmodem" || value === "x25" || value === "kermit" || value === "custom";
+}
+
+function isFrameRangeId(value: unknown): value is string | null {
+  return value === null || isBoundedString(value, 1, 80);
 }
 
 function isTransportMode(value: unknown): value is TransportMode {

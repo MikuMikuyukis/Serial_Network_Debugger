@@ -18,6 +18,7 @@ const EMPTY_PERIODIC_STATUS: PeriodicSendStatus = {
   sent_count: 0,
   started_at: null,
   last_sent_at: null,
+  frame_sequences: null,
 };
 
 function eventTime(timestamp?: string): string {

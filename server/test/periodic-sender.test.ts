@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventBroker } from "../src/core/event-broker.js";
 import { PeriodicSender } from "../src/core/periodic-sender.js";
+import { HexFrameSession } from "../src/core/hex-frame.js";
+import type { HexFrameConfig } from "../src/core/types.js";
 
 describe("periodic sender", () => {
   afterEach(() => vi.useRealTimers());
@@ -43,5 +45,29 @@ describe("periodic sender", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(sender.snapshot().active).toBe(false);
     expect(errors).toContain("周期发送已停止：write failed");
+  });
+
+  it("周期发送重新组帧并在状态中更新自增序号", async () => {
+    vi.useFakeTimers();
+    const payloads: string[] = [];
+    const frameSession = new HexFrameSession();
+    const sender = new PeriodicSender({
+      send: async (data) => { payloads.push(data.toString("hex").toUpperCase()); },
+    }, new EventBroker(), frameSession);
+    const config: HexFrameConfig = {
+      version: 1,
+      id: "periodic-sequence",
+      enabled: true,
+      fields: [
+        { id: "sequence", kind: "sequence", name: "序号", byte_length: 1, value: "FE", step: 1, byte_order: "big" },
+      ],
+    };
+
+    const started = await sender.start(Buffer.alloc(0), 100, { config, editorData: "" });
+    expect(started.frame_sequences).toEqual({ sequence: "FF" });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(payloads).toEqual(["FE", "FF", "00"]);
+    expect(sender.snapshot().frame_sequences).toEqual({ sequence: "01" });
+    sender.stop();
   });
 });

@@ -6,12 +6,14 @@ import fastifyWebsocket from "@fastify/websocket";
 import { SerialPort } from "serialport";
 import { ZodError } from "zod";
 import { encodePayload } from "../core/codec.js";
+import { buildHexFrame, HexFrameSession } from "../core/hex-frame.js";
 import { EventBroker } from "../core/event-broker.js";
 import { PeriodicSender } from "../core/periodic-sender.js";
 import {
   periodicSendRequestSchema,
   sendRequestSchema,
   transportConfigSchema,
+  hexFramePreviewSchema,
 } from "../core/schemas.js";
 import { TransportError } from "../core/transport.js";
 import { TransportManager } from "../core/transport-manager.js";
@@ -25,7 +27,8 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   const app = Fastify({ logger: options.logger ?? false });
   const broker = new EventBroker();
   const manager = new TransportManager(broker);
-  const periodicSender = new PeriodicSender(manager, broker);
+  const frameSession = new HexFrameSession();
+  const periodicSender = new PeriodicSender(manager, broker, frameSession);
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const publicDir = options.publicDir ?? resolve(moduleDir, "../../public");
 
@@ -77,10 +80,36 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.post("/api/send", async (request, reply) => {
     try {
       const body = sendRequestSchema.parse(request.body);
-      const payload = encodePayload(body.data, body.format, body.text_encoding, body.line_ending);
-      if (payload.length === 0) throw new Error("发送内容不能为空");
-      await manager.send(payload);
-      return { ok: true, message: `已发送 ${payload.length} 字节` };
+      const frameConfig = body.format === "hex" && body.frame_config?.enabled
+        ? body.frame_config
+        : undefined;
+      const frame = frameConfig
+        ? await frameSession.send(frameConfig, body.data, (data) => manager.send(data))
+        : null;
+      const payload = frame?.data ?? encodePayload(body.data, body.format, body.text_encoding, body.line_ending);
+      if (!frame) {
+        if (payload.length === 0) throw new Error("发送内容不能为空");
+        await manager.send(payload);
+      }
+      return {
+        ok: true,
+        message: `已发送 ${payload.length} 字节`,
+        frame_sequences: frame?.nextSequences ?? null,
+      };
+    } catch (error) {
+      return sendRequestError(reply, error, broker);
+    }
+  });
+
+  app.post("/api/frame/preview", async (request, reply) => {
+    try {
+      const body = hexFramePreviewSchema.parse(request.body);
+      const frame = buildHexFrame(body.frame_config, body.data);
+      return {
+        hex: frame.data.toString("hex").toUpperCase().replaceAll(/(..)(?=.)/g, "$1 "),
+        size: frame.data.length,
+        next_sequences: frame.nextSequences,
+      };
     } catch (error) {
       return sendRequestError(reply, error, broker);
     }
@@ -89,9 +118,19 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.post("/api/periodic-send/start", async (request, reply) => {
     try {
       const body = periodicSendRequestSchema.parse(request.body);
-      const payload = encodePayload(body.data, body.format, body.text_encoding, body.line_ending);
-      if (payload.length === 0) throw new Error("周期发送内容不能为空");
-      return await periodicSender.start(payload, body.interval_ms);
+      const frameConfig = body.format === "hex" && body.frame_config?.enabled
+        ? body.frame_config
+        : undefined;
+      const initialFrame = frameConfig ? frameSession.preview(frameConfig, body.data).data : null;
+      const payload = frameConfig
+        ? Buffer.alloc(0)
+        : encodePayload(body.data, body.format, body.text_encoding, body.line_ending);
+      if ((initialFrame?.length ?? payload.length) === 0) throw new Error("周期发送内容不能为空");
+      return await periodicSender.start(
+        payload,
+        body.interval_ms,
+        frameConfig ? { config: frameConfig, editorData: body.data } : undefined,
+      );
     } catch (error) {
       return sendRequestError(reply, error, broker);
     }

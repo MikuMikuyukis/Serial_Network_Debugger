@@ -2,6 +2,74 @@ export type TransportMode = "serial" | "tcp_client" | "tcp_server" | "udp";
 export type DataFormat = "text" | "hex";
 export type TextEncoding = "utf-8" | "ascii" | "gbk";
 export type LineEnding = "none" | "cr" | "lf" | "crlf";
+export type ByteOrder = "big" | "little";
+export type FrameByteLength = 1 | 2 | 3 | 4 | 8;
+
+interface HexFrameFieldBase {
+  id: string;
+  name: string;
+}
+
+export interface HexFrameStaticField extends HexFrameFieldBase {
+  kind: "header" | "frame_id" | "tail";
+  value: string;
+}
+
+export interface HexFrameSequenceField extends HexFrameFieldBase {
+  kind: "sequence";
+  byte_length: FrameByteLength;
+  value: string;
+  step: number;
+  byte_order: ByteOrder;
+}
+
+export interface HexFrameLengthField extends HexFrameFieldBase {
+  kind: "length";
+  byte_length: 1 | 2 | 3 | 4;
+  byte_order: ByteOrder;
+  range_start_id: string | null;
+  range_end_id: string | null;
+}
+
+export interface HexFrameDataField extends HexFrameFieldBase {
+  kind: "data";
+  byte_length: FrameByteLength | null;
+  source: "fixed" | "editor";
+  data_type: "hex" | "uint" | "int" | "float32" | "float64";
+  value: string;
+  byte_order: ByteOrder;
+}
+
+export interface Crc16Parameters {
+  preset: "modbus" | "arc" | "ccitt_false" | "xmodem" | "x25" | "kermit" | "custom";
+  polynomial: string;
+  initial: string;
+  xor_out: string;
+  reflect_input: boolean;
+  reflect_output: boolean;
+}
+
+export interface HexFrameChecksumField extends HexFrameFieldBase {
+  kind: "checksum";
+  parameters: Crc16Parameters;
+  byte_order: ByteOrder;
+  range_start_id: string | null;
+  range_end_id: string | null;
+}
+
+export type HexFrameField =
+  | HexFrameStaticField
+  | HexFrameSequenceField
+  | HexFrameLengthField
+  | HexFrameDataField
+  | HexFrameChecksumField;
+
+export interface HexFrameConfig {
+  version: 1;
+  id: string;
+  enabled: boolean;
+  fields: HexFrameField[];
+}
 
 export interface SerialConfig {
   mode: "serial";
@@ -57,10 +125,12 @@ export interface SendPayload {
   format: DataFormat;
   text_encoding: TextEncoding;
   line_ending: LineEnding;
+  frame_config?: HexFrameConfig;
 }
 
 export interface PeriodicSendRequest extends SendPayload {
   interval_ms: number;
+  frame_config?: HexFrameConfig;
 }
 
 export interface PeriodicSendStatus {
@@ -69,6 +139,7 @@ export interface PeriodicSendStatus {
   sent_count: number;
   started_at: string | null;
   last_sent_at: string | null;
+  frame_sequences: Record<string, string> | null;
 }
 
 export interface SendPreset extends SendPayload {
