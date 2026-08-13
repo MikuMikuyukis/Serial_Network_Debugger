@@ -19,6 +19,7 @@ export const tcpClientConfigSchema = z.object({
   host: trimmedHost,
   port,
   connect_timeout: z.number().positive().max(60).default(8),
+  auto_reconnect: z.boolean().default(false),
 });
 
 export const tcpServerConfigSchema = z.object({

@@ -7,9 +7,15 @@ function peerName(socket: Socket): string {
   return `${socket.remoteAddress ?? "未知客户端"}:${socket.remotePort ?? "?"}`;
 }
 
+const TCP_RECONNECT_INTERVAL_MS = 3_000;
+
 export class TcpClientTransport extends BaseTransport {
   readonly mode = "tcp_client" as const;
   #socket: Socket | undefined;
+  #reconnectTimer: NodeJS.Timeout | undefined;
+  #reconnecting = false;
+  #stopping = true;
+  #generation = 0;
 
   constructor(
     readonly config: TcpClientConfig,
@@ -19,19 +25,23 @@ export class TcpClientTransport extends BaseTransport {
   }
 
   async start(): Promise<void> {
+    this.#stopping = false;
+    this.#generation += 1;
+    try {
+      await this.#connect(false, this.#generation);
+    } catch (error) {
+      this.#stopping = true;
+      throw new TransportError(
+        `无法连接 TCP ${this.peer}：${errorMessage(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  async #connect(reconnecting: boolean, generation: number): Promise<void> {
     const socket = new net.Socket();
     this.#socket = socket;
     socket.setNoDelay(true);
-    socket.on("data", (data) => this.publishData("rx", data, this.peer));
-    socket.on("error", (error) => {
-      if (this.connected) this.publishError(`TCP 连接错误：${error.message}`);
-    });
-    socket.on("close", () => {
-      if (!this.connected) return;
-      this.connected = false;
-      this.publishNotice("TCP 远端已断开");
-      this.publishStatus();
-    });
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -51,19 +61,36 @@ export class TcpClientTransport extends BaseTransport {
         });
       });
     } catch (error) {
-      this.#socket = undefined;
+      if (this.#socket === socket) this.#socket = undefined;
       socket.destroy();
-      throw new TransportError(
-        `无法连接 TCP ${this.peer}：${errorMessage(error)}`,
-        { cause: error },
-      );
+      throw error;
     }
+
+    if (this.#stopping || generation !== this.#generation) {
+      if (this.#socket === socket) this.#socket = undefined;
+      socket.destroy();
+      return;
+    }
+
+    socket.on("data", (data) => this.publishData("rx", data, this.peer));
+    socket.on("error", (error) => {
+      if (this.connected && this.#socket === socket) {
+        this.publishError(`TCP 连接错误：${error.message}`);
+      }
+    });
+    socket.on("close", () => this.#handleClose(socket));
     this.connected = true;
-    this.publishNotice(`已连接 TCP ${this.peer}`);
+    this.#reconnecting = false;
+    this.publishNotice(`${reconnecting ? "已重新连接" : "已连接"} TCP ${this.peer}`);
     this.publishStatus();
   }
 
   async stop(): Promise<void> {
+    this.#stopping = true;
+    this.#generation += 1;
+    clearTimeout(this.#reconnectTimer);
+    this.#reconnectTimer = undefined;
+    this.#reconnecting = false;
     this.connected = false;
     const socket = this.#socket;
     this.#socket = undefined;
@@ -93,11 +120,58 @@ export class TcpClientTransport extends BaseTransport {
   }
 
   override details(): Record<string, unknown> {
-    return { host: this.config.host, port: this.config.port };
+    return {
+      host: this.config.host,
+      port: this.config.port,
+      auto_reconnect: this.config.auto_reconnect,
+      reconnecting: this.#reconnecting,
+      reconnect_interval_ms: TCP_RECONNECT_INTERVAL_MS,
+    };
   }
 
   private get peer(): string {
     return `${this.config.host}:${this.config.port}`;
+  }
+
+  #handleClose(socket: Socket): void {
+    if (this.#socket !== socket) return;
+    this.#socket = undefined;
+    if (this.#stopping) return;
+    const wasConnected = this.connected;
+    this.connected = false;
+    if (wasConnected) this.publishNotice("TCP 远端已断开");
+    if (this.config.auto_reconnect) {
+      this.#scheduleReconnect();
+    } else {
+      this.publishStatus();
+    }
+  }
+
+  #scheduleReconnect(): void {
+    if (this.#stopping || this.connected || this.#reconnectTimer) return;
+    const wasReconnecting = this.#reconnecting;
+    this.#reconnecting = true;
+    if (!wasReconnecting) {
+      this.publishNotice(`将在 ${TCP_RECONNECT_INTERVAL_MS / 1_000} 秒后重连 TCP ${this.peer}`);
+      this.publishStatus();
+    }
+    const generation = this.#generation;
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = undefined;
+      void this.#retryConnect(generation);
+    }, TCP_RECONNECT_INTERVAL_MS);
+  }
+
+  async #retryConnect(generation: number): Promise<void> {
+    if (this.#stopping || generation !== this.#generation) return;
+    this.publishNotice(`正在重连 TCP ${this.peer}`);
+    try {
+      await this.#connect(true, generation);
+    } catch (error) {
+      if (this.#stopping || generation !== this.#generation) return;
+      this.publishNotice(`TCP 重连失败：${errorMessage(error)}`);
+      this.#scheduleReconnect();
+    }
   }
 }
 

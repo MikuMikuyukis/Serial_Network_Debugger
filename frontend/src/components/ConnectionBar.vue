@@ -35,14 +35,20 @@ const busy = ref(false);
 const refreshingPorts = ref(false);
 
 const connected = computed(() => props.status.connected);
+const reconnecting = computed(() => (
+  props.status.mode === "tcp_client" && props.status.details.reconnecting === true
+));
+const sessionActive = computed(() => connected.value || reconnecting.value);
 const effectiveMode = computed(() => props.status.mode ?? settings.value.mode);
 const modeLabel = computed(() => modes.find((item) => item.value === effectiveMode.value)?.label ?? "通信");
-const summary = computed(() => props.status.connected ? summarizeStatus(props.status) : summarizeConfig(settings.value));
+const summary = computed(() => sessionActive.value ? summarizeStatus(props.status) : summarizeConfig(settings.value));
 
 watch(
   () => props.status,
   (status) => {
-    if (status.connected && status.mode) settings.value.mode = status.mode;
+    if ((status.connected || status.details.reconnecting === true) && status.mode) {
+      settings.value.mode = status.mode;
+    }
   },
   { immediate: true },
 );
@@ -148,7 +154,9 @@ function summarizeConfig(source: TransportSettings): string {
     const parity = { N: "N", E: "E", O: "O", M: "M", S: "S" }[value.parity];
     return `${value.port || "未选择串口"} · ${value.baudrate} · ${value.bytesize}${parity}${value.stopbits} · 合并 ${value.receive_idle_ms} ms`;
   }
-  if (source.mode === "tcp_client") return `${source.tcpClient.host}:${source.tcpClient.port}`;
+  if (source.mode === "tcp_client") {
+    return `${source.tcpClient.host}:${source.tcpClient.port}${source.tcpClient.auto_reconnect ? " · 自动重连" : ""}`;
+  }
   if (source.mode === "tcp_server") return `${source.tcpServer.host}:${source.tcpServer.port} · 广播`;
   const remote = source.udp.remote_host && source.udp.remote_port
     ? ` → ${source.udp.remote_host}:${source.udp.remote_port}`
@@ -161,7 +169,9 @@ function summarizeStatus(status: TransportStatus): string {
   if (status.mode === "serial") {
     return `${String(details.port)} · ${Number(details.baudrate)} · ${Number(details.bytesize)}${String(details.parity)}${Number(details.stopbits)} · 合并 ${Number(details.receive_idle_ms)} ms`;
   }
-  if (status.mode === "tcp_client") return `${String(details.host)}:${Number(details.port)}`;
+  if (status.mode === "tcp_client") {
+    return `${String(details.host)}:${Number(details.port)}${details.reconnecting === true ? " · 重连中" : details.auto_reconnect === true ? " · 自动重连" : ""}`;
+  }
   if (status.mode === "tcp_server") {
     return `${String(details.host)}:${Number(details.port)} · ${Number(details.client_count ?? 0)} 个客户端`;
   }
@@ -206,11 +216,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
       <button class="bar-icon-button" type="button" title="配置通信设置" aria-label="配置通信设置" @click="openSettings">
         <Settings :size="18" />
       </button>
-      <button v-if="!connected" class="bar-command connect" type="button" :disabled="busy" @click="connect">
+      <button v-if="!sessionActive" class="bar-command connect" type="button" :disabled="busy" @click="connect">
         <Link :size="16" /><span>连接</span>
       </button>
       <button v-else class="bar-command disconnect" type="button" :disabled="busy" @click="disconnect">
-        <Power :size="16" /><span>断开</span>
+        <Power :size="16" /><span>{{ reconnecting ? "停止重连" : "断开" }}</span>
       </button>
     </div>
   </section>
@@ -235,7 +245,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
               :key="item.value"
               class="mode-tab"
               :class="{ active: draft.mode === item.value }"
-              :disabled="connected"
+              :disabled="sessionActive"
               type="button"
               @click="draft.mode = item.value"
             >
@@ -243,7 +253,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
             </button>
           </div>
 
-          <fieldset :disabled="connected" class="settings-fields">
+          <fieldset :disabled="sessionActive" class="settings-fields">
             <div v-if="draft.mode === 'serial'" class="dialog-grid">
               <label class="field span-2">
                 <span>串口设备</span>
@@ -271,6 +281,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
               <label class="field"><span>远端地址</span><input v-model.trim="draft.tcpClient.host" required /></label>
               <label class="field"><span>远端端口</span><input v-model.number="draft.tcpClient.port" type="number" min="1" max="65535" required /></label>
               <label class="field span-2"><span>连接超时 (秒)</span><input v-model.number="draft.tcpClient.connect_timeout" type="number" min="0.1" max="60" step="0.1" required /></label>
+              <label class="settings-toggle span-2">
+                <input v-model="draft.tcpClient.auto_reconnect" type="checkbox" />
+                <span>掉线自动重连</span>
+              </label>
             </div>
 
             <div v-else-if="draft.mode === 'tcp_server'" class="dialog-grid">
@@ -286,12 +300,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
             </div>
           </fieldset>
 
-          <p v-if="connected" class="dialog-notice">通信已连接，断开后才能修改设置。</p>
+          <p v-if="sessionActive" class="dialog-notice">{{ reconnecting ? "正在自动重连，停止重连后才能修改设置。" : "通信已连接，断开后才能修改设置。" }}</p>
         </div>
 
         <footer class="dialog-footer">
           <button class="dialog-button secondary" type="button" @click="closeSettings">取消</button>
-          <button class="dialog-button primary" type="button" :disabled="connected" @click="applySettings">应用设置</button>
+          <button class="dialog-button primary" type="button" :disabled="sessionActive" @click="applySettings">应用设置</button>
         </footer>
       </section>
     </div>

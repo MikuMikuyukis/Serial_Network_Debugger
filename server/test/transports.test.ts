@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { EventBroker } from "../src/core/event-broker.js";
 import { TcpClientTransport, TcpServerTransport } from "../src/transports/tcp.js";
 import { UdpTransport } from "../src/transports/udp.js";
-import { nextDataEvent, waitForSocketData } from "./helpers.js";
+import { nextDataEvent, nextEvent, waitForSocketData } from "./helpers.js";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -37,6 +37,17 @@ describe("network transports", () => {
   });
 
   it("TCP Client 使用真实流连接", async () => {
+    const broker = new EventBroker();
+    const statuses: Array<{ connected: boolean; reconnecting: unknown }> = [];
+    const unsubscribe = broker.subscribe((event) => {
+      if (event.type === "status") {
+        statuses.push({
+          connected: event.status.connected,
+          reconnecting: event.status.details.reconnecting,
+        });
+      }
+    });
+    cleanup.push(async () => unsubscribe());
     const echoServer = net.createServer((socket) => {
       socket.once("data", (data) => socket.end(data.toString().toUpperCase()));
     });
@@ -44,18 +55,76 @@ describe("network transports", () => {
     cleanup.push(async () => new Promise<void>((resolve) => echoServer.close(() => resolve())));
     const address = echoServer.address();
     if (!address || typeof address === "string") throw new Error("未取得测试端口");
-    const broker = new EventBroker();
     const client = new TcpClientTransport({
       mode: "tcp_client",
       host: "127.0.0.1",
       port: address.port,
       connect_timeout: 2,
+      auto_reconnect: false,
     }, broker);
     await client.start();
     cleanup.push(() => client.stop());
     const receiving = nextDataEvent(broker, "rx");
+    const disconnected = nextEvent(
+      broker,
+      (event) => event.type === "status" && !event.status.connected,
+    );
     await client.send(Buffer.from("hello"));
     expect((await receiving).text).toBe("HELLO");
+    await disconnected;
+    expect(statuses.at(-1)).toEqual({ connected: false, reconnecting: false });
+  });
+
+  it("TCP Client 可在远端恢复后自动重连", async () => {
+    const sockets = new Set<net.Socket>();
+    let acceptedConnections = 0;
+    const server = net.createServer((socket) => {
+      acceptedConnections += 1;
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("未取得测试端口");
+    const port = address.port;
+    cleanup.push(async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+
+    const broker = new EventBroker();
+    const client = new TcpClientTransport({
+      mode: "tcp_client",
+      host: "127.0.0.1",
+      port,
+      connect_timeout: 0.5,
+      auto_reconnect: true,
+    }, broker);
+    await client.start();
+    cleanup.push(() => client.stop());
+
+    const reconnecting = nextEvent(
+      broker,
+      (event) => event.type === "status" && event.status.details.reconnecting === true,
+    );
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await expect(reconnecting).resolves.toMatchObject({
+      type: "status",
+      status: { connected: false, details: { auto_reconnect: true, reconnecting: true } },
+    });
+
+    await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+    const reconnected = nextEvent(
+      broker,
+      (event) => event.type === "status" && event.status.connected,
+      5_000,
+    );
+    await expect(reconnected).resolves.toMatchObject({
+      type: "status",
+      status: { connected: true, details: { reconnecting: false } },
+    });
+    expect(acceptedConnections).toBe(2);
   });
 
   it("UDP 端点交换数据报并回复最近来源", async () => {

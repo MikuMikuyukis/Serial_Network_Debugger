@@ -51,6 +51,7 @@ export const DEFAULT_TRANSPORT_SETTINGS: TransportSettings = {
     host: "127.0.0.1",
     port: 9000,
     connect_timeout: 8,
+    auto_reconnect: false,
   },
   tcpServer: {
     mode: "tcp_server",

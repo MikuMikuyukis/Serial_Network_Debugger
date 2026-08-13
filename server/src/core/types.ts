@@ -18,6 +18,7 @@ export interface TcpClientConfig {
   host: string;
   port: number;
   connect_timeout: number;
+  auto_reconnect: boolean;
 }
 
 export interface TcpServerConfig {

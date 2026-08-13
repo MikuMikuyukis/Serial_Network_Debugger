@@ -7,7 +7,12 @@ describe("transport schemas", () => {
       mode: "tcp_client",
       host: "127.0.0.1",
       port: 9000,
-    })).toMatchObject({ mode: "tcp_client", port: 9000, connect_timeout: 8 });
+    })).toMatchObject({
+      mode: "tcp_client",
+      port: 9000,
+      connect_timeout: 8,
+      auto_reconnect: false,
+    });
   });
 
   it("串口接收合并间隔默认 20 ms", () => {
