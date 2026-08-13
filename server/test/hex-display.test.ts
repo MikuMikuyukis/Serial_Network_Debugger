@@ -4,6 +4,8 @@ import {
   deleteAcrossHexDisplaySpace,
   formatHexDisplay,
   hexDisplayCaret,
+  MAX_HEX_BUSINESS_LENGTH,
+  MAX_HEX_DISPLAY_LENGTH,
 } from "../../frontend/src/hex-display.js";
 
 describe("HEX editor display", () => {
@@ -18,6 +20,13 @@ describe("HEX editor display", () => {
 
   it("显示空格不进入业务原值", () => {
     expect(compactHexDisplay("12 34 56 AB")).toBe("123456AB");
+  });
+
+  it("显示空格不减少或扩大 HEX 业务容量", () => {
+    expect(MAX_HEX_DISPLAY_LENGTH).toBe(1_572_863);
+    expect(compactHexDisplay("A".repeat(MAX_HEX_BUSINESS_LENGTH + 1))).toHaveLength(
+      MAX_HEX_BUSINESS_LENGTH,
+    );
   });
 
   it.each([

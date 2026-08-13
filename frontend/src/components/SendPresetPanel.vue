@@ -1,5 +1,12 @@
 <script setup lang="ts">
 import { Download, ListStart, Plus, Send, Square, Trash2, X } from "@lucide/vue";
+import {
+  compactHexDisplay,
+  deleteAcrossHexDisplaySpace,
+  formatHexDisplay,
+  hexDisplayCaret,
+  MAX_HEX_DISPLAY_LENGTH,
+} from "../hex-display";
 import type { SendPreset, SendPresetDraft } from "../types";
 
 defineProps<{
@@ -36,6 +43,48 @@ function checkedValue(event: Event): boolean {
 function numberValue(event: Event): number {
   const value = (event.target as HTMLInputElement).valueAsNumber;
   return Number.isFinite(value) ? Math.min(86_400_000, Math.max(0, Math.round(value))) : 50;
+}
+
+function displayedPresetData(preset: SendPreset): string {
+  return preset.format === "hex" ? formatHexDisplay(preset.data) : preset.data;
+}
+
+function presetDataMaxlength(preset: SendPreset): number {
+  return preset.format === "hex" ? MAX_HEX_DISPLAY_LENGTH : 1_048_576;
+}
+
+function updatePresetData(preset: SendPreset, event: Event): void {
+  const target = event.target as HTMLInputElement;
+  if (preset.format !== "hex") {
+    emit("update", preset.id, { data: target.value });
+    return;
+  }
+
+  const rawOffset = compactHexDisplay(target.value.slice(0, target.selectionStart ?? 0)).length;
+  const compactValue = compactHexDisplay(target.value);
+  target.value = formatHexDisplay(compactValue);
+  emit("update", preset.id, { data: compactValue });
+  const caret = hexDisplayCaret(rawOffset, compactValue.length);
+  target.setSelectionRange(caret, caret);
+}
+
+function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void {
+  if (preset.format !== "hex" || (event.key !== "Backspace" && event.key !== "Delete")) return;
+
+  const target = event.target as HTMLInputElement;
+  if (target.selectionStart === null || target.selectionEnd === null) return;
+  if (target.selectionStart !== target.selectionEnd) return;
+  const edit = deleteAcrossHexDisplaySpace(
+    target.value,
+    target.selectionStart,
+    event.key === "Backspace" ? "backward" : "forward",
+  );
+  if (!edit) return;
+
+  event.preventDefault();
+  target.value = formatHexDisplay(edit.value);
+  emit("update", preset.id, { data: edit.value });
+  target.setSelectionRange(edit.caret, edit.caret);
 }
 </script>
 
@@ -105,11 +154,12 @@ function numberValue(event: Event): number {
             <td>
               <input
                 class="preset-cell-input preset-data-input"
-                :value="preset.data"
-                maxlength="1048576"
+                :value="displayedPresetData(preset)"
+                :maxlength="presetDataMaxlength(preset)"
                 :placeholder="preset.format === 'hex' ? 'AA 55 01 00' : '输入发送内容'"
                 title="发送内容"
-                @input="emit('update', preset.id, { data: inputValue($event) })"
+                @input="updatePresetData(preset, $event)"
+                @keydown="handlePresetDataKeydown(preset, $event)"
               />
             </td>
             <td class="preset-col-format">

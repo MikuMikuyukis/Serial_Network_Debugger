@@ -7,6 +7,7 @@ import {
   deleteAcrossHexDisplaySpace,
   formatHexDisplay,
   hexDisplayCaret,
+  MAX_HEX_DISPLAY_LENGTH,
 } from "../hex-display";
 import {
   loadSendEditor,
@@ -65,7 +66,7 @@ const displayedSendData = computed(() => (
   format.value === "hex" ? formatHexDisplay(sendData.value) : sendData.value
 ));
 const sendDataMaxlength = computed(() => (
-  format.value === "hex" ? 1_572_863 : 1_048_576
+  format.value === "hex" ? MAX_HEX_DISPLAY_LENGTH : 1_048_576
 ));
 const editorPayload = computed<SendPayload>(() => ({
   data: sendData.value,

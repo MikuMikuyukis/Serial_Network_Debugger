@@ -1,5 +1,9 @@
+export const MAX_HEX_BUSINESS_LENGTH = 1_048_576;
+export const MAX_HEX_DISPLAY_LENGTH = MAX_HEX_BUSINESS_LENGTH
+  + Math.floor((MAX_HEX_BUSINESS_LENGTH - 1) / 2);
+
 export function compactHexDisplay(value: string): string {
-  return value.replaceAll(/\s/g, "");
+  return value.replaceAll(/\s/g, "").slice(0, MAX_HEX_BUSINESS_LENGTH);
 }
 
 export function formatHexDisplay(value: string): string {
