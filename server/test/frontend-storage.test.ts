@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONFIGURATION_IMPORT_EVENT_KEY,
@@ -310,6 +311,18 @@ describe("frontend configuration profile storage", () => {
     expect(loadTransportSettings().tcpClient.port).toBe(9100);
     expect(loadConfigurationProfiles()).toHaveLength(1);
     expect(localStorage.getItem(CONFIGURATION_IMPORT_EVENT_KEY)).toBeNull();
+  });
+
+  it("示例 BLE AT 指令配置可直接导入", () => {
+    const serialized = readFileSync(new URL("../../examples/ble-at-command-config-v1.json", import.meta.url), "utf8");
+    const backup = parseConfigurationBackup(serialized);
+
+    expect(backup.profiles[0]?.metadata.name).toBe("BLE AT 指令");
+    expect(backup.profiles[0]?.transport.serial.baudrate).toBe(115200);
+    expect(backup.profiles[0]?.send_presets).toHaveLength(57);
+    expect(backup.profiles[0]?.send_presets.every((preset) => (
+      preset.text_encoding === "ascii" && preset.line_ending === "crlf"
+    ))).toBe(true);
   });
 });
 

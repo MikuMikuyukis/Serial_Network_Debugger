@@ -1,0 +1,132 @@
+{
+  "application": "serial-network-debugger",
+  "version": 1,
+  "exported_at": "2026-08-14T12:47:32.000Z",
+  "theme": "light",
+  "active_profile_id": "ble-at-commands",
+  "profiles": [
+    {
+      "metadata": {
+        "id": "ble-at-commands",
+        "name": "BLE AT 指令",
+        "created_at": "2026-08-14T12:47:32.000Z",
+        "updated_at": "2026-08-14T12:47:32.000Z"
+      },
+      "transport": {
+        "version": 1,
+        "mode": "serial",
+        "serial": {
+          "mode": "serial",
+          "port": "",
+          "baudrate": 115200,
+          "bytesize": 8,
+          "parity": "N",
+          "stopbits": 1,
+          "receive_idle_ms": 20
+        },
+        "tcpClient": {
+          "mode": "tcp_client",
+          "host": "127.0.0.1",
+          "port": 9000,
+          "connect_timeout": 8,
+          "auto_reconnect": false
+        },
+        "tcpServer": {
+          "mode": "tcp_server",
+          "host": "0.0.0.0",
+          "port": 9000
+        },
+        "udp": {
+          "mode": "udp",
+          "local_host": "0.0.0.0",
+          "local_port": 9000,
+          "remote_host": null,
+          "remote_port": null
+        }
+      },
+      "send_editor": {
+        "version": 1,
+        "data": "AT+VERS?",
+        "format": "text",
+        "text_encoding": "ascii",
+        "line_ending": "crlf",
+        "interval_ms": 1000
+      },
+      "hex_frame": {
+        "version": 1,
+        "id": "ble-at-main-frame",
+        "enabled": false,
+        "fields": []
+      },
+      "send_presets": [
+        { "id": "q01-fuid", "name": "查询：FLASH UID", "data": "AT+FUID?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q02-vers", "name": "查询：固件版本", "data": "AT+VERS?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q03-conn", "name": "查询：蓝牙连接状态", "data": "AT+CONN?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q04-cuid", "name": "查询：客户编号", "data": "AT+CUID?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q05-gled", "name": "查询：LED 输出方式", "data": "AT+GLED?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q06-gbaud", "name": "查询：串口波特率", "data": "AT+GBAUD?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q07-role", "name": "查询：蓝牙主从模式", "data": "AT+ROLE?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q08-gadvdata", "name": "查询：广播内容", "data": "AT+GADVDATA", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q09-gadvint", "name": "查询：从机广播间隔", "data": "AT+GADVINT?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q10-gmtu", "name": "查询：从机 MTU", "data": "AT+GMTU?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q11-legn", "name": "查询：BLE 蓝牙名称", "data": "AT+LEGN?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q12-lega", "name": "查询：BLE 蓝牙地址", "data": "AT+LEGA?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q13-gscanst", "name": "查询：主机扫描使能", "data": "AT+GSCANST?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q14-gconpara", "name": "查询：主机连接参数", "data": "AT+GCONPARA?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q15-gscanwin", "name": "查询：主机扫描时间", "data": "AT+GSCANWIN?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "q16-gscanint", "name": "查询：主机扫描间隔", "data": "AT+GSCANINT?", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s01-enat", "name": "设置：进入命令模式", "data": "AT+ENAT", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s02-exat", "name": "设置：进入数据模式", "data": "AT+EXAT", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s03-rest", "name": "设置：蓝牙模块复位", "data": "AT+REST", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s04-outmsgen", "name": "设置：启用状态变化串口输出", "data": "AT+OUTMSGEN", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s05-outmsgdis", "name": "设置：禁用状态变化串口输出", "data": "AT+OUTMSGDIS", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s06-slep", "name": "设置：进入休眠模式", "data": "AT+SLEP", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s07-outl", "name": "设置：LED 不连低-连高", "data": "AT+OUTL", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s08-outh", "name": "设置：LED 不连高-连地", "data": "AT+OUTH", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s09-othz", "name": "设置：LED 不连闪-连低", "data": "AT+OTHZ", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s10-rdef", "name": "设置：恢复出厂设置", "data": "AT+RDEF", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s11-baud4", "name": "设置：串口波特率 115200", "data": "AT+BAUD4", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s12-mast", "name": "设置：主机模式", "data": "AT+MAST", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s13-slav", "name": "设置：从机模式", "data": "AT+SLAV", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s14-leon", "name": "设置：开启 BLE 广播", "data": "AT+LEON", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s15-leof", "name": "设置：关闭 BLE 广播", "data": "AT+LEOF", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s16-uids", "name": "模板：修改 UUID Service", "data": "AT+UIDSXXXX", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s17-uidw", "name": "模板：修改 UUID Write", "data": "AT+UIDWXXXX", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s18-uidn", "name": "模板：修改 UUID Notify", "data": "AT+UIDNXXXX", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s19-lead", "name": "示例：设置 BLE 地址", "data": "AT+LEAD1234567890AB", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s20-lena", "name": "示例：设置 BLE 名称 XLCX", "data": "AT+LENAXLCX", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s21-cadv", "name": "设置：广播内容恢复出厂", "data": "AT+CADV", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s22-sadv", "name": "查询：广播内容和 MAC", "data": "AT+SADV", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s23-uadv", "name": "模板：自定义广播内容", "data": "AT+UADVXXXX", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s24-advint", "name": "示例：从机广播间隔 100ms", "data": "AT+ADVINT=00A0", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s25-enallow", "name": "设置：允许低功耗广播", "data": "AT+ENALLOW", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s26-disallow", "name": "设置：禁止低功耗广播", "data": "AT+DISALLOW", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s27-smtu", "name": "示例：设置从机 MTU 512", "data": "AT+SMTU=512", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s28-lenc", "name": "设置：从机断开连接", "data": "AT+LENC", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s29-lowp", "name": "设置：从机进入低功耗", "data": "AT+LOWP", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s30-wakp", "name": "设置：从低功耗唤醒", "data": "AT+WAKP", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s31-pname", "name": "模板：设置主机配对名称", "data": "AT+PNAME=XXXX", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s32-sconmaxint", "name": "示例：主机最大连接间隔", "data": "AT+SCONMAXINT=0030", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s33-sconminint", "name": "示例：主机最小连接间隔", "data": "AT+SCONMININT=0006", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s34-pmac", "name": "模板：设置主机配对地址", "data": "AT+PMAC=XXXXXXXXXXXX", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s35-scanwin", "name": "模板：设置主机扫描时间", "data": "AT+SCANWIN=XXXX", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s36-scanint", "name": "模板：设置主机扫描间隔", "data": "AT+SCANINT=XXXX", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s37-scanen", "name": "设置：主机扫描使能", "data": "AT+SCANEN", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s38-scandis", "name": "设置：主机扫描禁止", "data": "AT+SCANDIS", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s39-enotscmsg", "name": "设置：输出扫描信息", "data": "AT+ENOTSCMSG", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s40-diotscmsg", "name": "设置：禁止输出扫描信息", "data": "AT+DIOTSCMSG", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" },
+        { "id": "s41-cpair", "name": "设置：清除配对信息", "data": "AT+CPAIR", "format": "text", "text_encoding": "ascii", "line_ending": "crlf", "enabled": true, "auto_send_on_change": false, "delay_ms": 50, "updated_at": "2026-08-14T12:47:32.000Z" }
+      ],
+      "frame_parser": {
+        "version": 1,
+        "id": "ble-at-response-parser",
+        "name": "BLE AT 响应",
+        "enabled": false,
+        "minimum_length": 0,
+        "match_offset": 0,
+        "match_hex": "",
+        "fields": []
+      }
+    }
+  ]
+}
