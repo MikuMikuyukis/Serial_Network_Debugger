@@ -114,25 +114,27 @@ function resetDraft(): void {
   selectedFieldId.value = draft.value.fields[0]?.id ?? null;
 }
 
-function applySettings(): void {
+function applySettings(): boolean {
   normalizeDraftHex();
   const error = validateFrameParserConfig(draft.value);
   if (error) {
     emit("error", error);
-    return;
+    return false;
   }
   try {
-    config.value = cloneParserConfig(draft.value);
+    const nextConfig = cloneParserConfig(draft.value);
+    const changed = JSON.stringify(nextConfig) !== JSON.stringify(config.value);
+    config.value = nextConfig;
     saveFrameParserConfig(config.value, props.profileId);
-    latestValues.value = {};
-    histories.value = {};
-    matchedCount.value = 0;
-    unmatchedCount.value = 0;
-    errorCount.value = 0;
+    if (changed) clearAnalysis();
+    return true;
   } catch {
     emit("error", "解析配置保存失败，请检查浏览器本地存储空间");
+    return false;
   }
 }
+
+defineExpose({ persistPendingState: applySettings });
 
 function handleStorageChange(event: StorageEvent): void {
   if (event.storageArea !== localStorage || event.key !== frameParserStorageKey(props.profileId)) return;

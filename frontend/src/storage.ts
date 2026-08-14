@@ -13,6 +13,7 @@ import type {
   TransportMode,
   UdpConfig,
 } from "./types";
+import { validateFrameParserConfig } from "./frame-parser";
 
 export type Theme = "light" | "dark";
 
@@ -32,6 +33,24 @@ export interface ConfigurationProfile {
   updated_at: string;
 }
 
+export interface ConfigurationBackupProfile {
+  metadata: ConfigurationProfile;
+  transport: TransportSettings;
+  send_editor: SendEditorDraft;
+  hex_frame: HexFrameConfig;
+  send_presets: SendPreset[];
+  frame_parser: FrameParserConfig;
+}
+
+export interface ConfigurationBackup {
+  application: "serial-network-debugger";
+  version: 1;
+  exported_at: string;
+  theme: Theme;
+  active_profile_id: string;
+  profiles: ConfigurationBackupProfile[];
+}
+
 const SETTINGS_KEY = "snd.transport-settings.v1";
 const THEME_KEY = "snd.theme";
 const SEND_PRESETS_KEY = "snd.send-presets.v1";
@@ -41,6 +60,9 @@ export const FRAME_PARSER_CONFIG_KEY = "snd.frame-parser-config.v1";
 const PROFILES_KEY = "snd.configuration-profiles.v1";
 const ACTIVE_PROFILE_KEY = "snd.active-configuration-profile.v1";
 const DEFAULT_PROFILE_ID = "default";
+const BACKUP_APPLICATION = "serial-network-debugger";
+const BACKUP_VERSION = 1;
+export const CONFIGURATION_IMPORT_EVENT_KEY = "snd.configuration-import.v1";
 export const MAX_CONFIGURATION_PROFILES = 20;
 export const MAX_SEND_PRESETS = 100;
 
@@ -139,6 +161,64 @@ export function loadActiveProfileId(): string {
 
 export function saveActiveProfileId(profileId: string): void {
   localStorage.setItem(ACTIVE_PROFILE_KEY, profileId);
+}
+
+export function createConfigurationBackup(): ConfigurationBackup {
+  const profiles = loadConfigurationProfiles();
+  const storedTheme = localStorage.getItem(THEME_KEY);
+  const backup: ConfigurationBackup = {
+    application: BACKUP_APPLICATION,
+    version: BACKUP_VERSION,
+    exported_at: new Date().toISOString(),
+    theme: storedTheme === "light" || storedTheme === "dark"
+      ? storedTheme
+      : typeof document !== "undefined" && document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+    active_profile_id: loadActiveProfileId(),
+    profiles: profiles.map((metadata) => ({
+      metadata,
+      transport: loadTransportSettings(metadata.id),
+      send_editor: loadSendEditor(metadata.id),
+      hex_frame: loadHexFrameConfig(metadata.id),
+      send_presets: loadSendPresets(metadata.id),
+      frame_parser: loadFrameParserConfig(metadata.id),
+    })),
+  };
+  const normalized = normalizeConfigurationBackup(backup);
+  if (!normalized) throw new Error("当前保存的配置包含无效数据，无法导出");
+  return normalized;
+}
+
+export function parseConfigurationBackup(serialized: string): ConfigurationBackup {
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized) as unknown;
+  } catch {
+    throw new Error("配置文件不是有效的 JSON");
+  }
+  const backup = normalizeConfigurationBackup(value);
+  if (!backup) throw new Error("配置文件格式、版本或内容无效");
+  return backup;
+}
+
+export function importConfigurationBackup(value: ConfigurationBackup): void {
+  const backup = normalizeConfigurationBackup(value);
+  if (!backup) throw new Error("配置文件格式、版本或内容无效");
+  const previous = createConfigurationBackup();
+  try {
+    replaceConfigurationBackup(backup);
+  } catch (error) {
+    try {
+      replaceConfigurationBackup(previous);
+    } catch {
+      // Preserve the original import error if browser storage is no longer writable.
+    }
+    throw error;
+  }
+  try {
+    localStorage.setItem(CONFIGURATION_IMPORT_EVENT_KEY, createStorageId());
+  } catch {
+    // The importing window reloads itself even if cross-window notification is unavailable.
+  }
 }
 
 export function copyConfigurationProfileData(sourceProfileId: string, targetProfileId: string): void {
@@ -326,6 +406,168 @@ function readProfileItem(baseKey: string, profileId: string): string | null {
   return profileId === DEFAULT_PROFILE_ID ? localStorage.getItem(baseKey) : null;
 }
 
+function replaceConfigurationBackup(backup: ConfigurationBackup): void {
+  const existingProfiles = loadConfigurationProfiles();
+  for (const entry of backup.profiles) {
+    const profileId = entry.metadata.id;
+    saveTransportSettings(entry.transport, profileId);
+    saveSendEditor(entry.send_editor, profileId);
+    saveHexFrameConfig(entry.hex_frame, profileId);
+    saveSendPresets(entry.send_presets, profileId);
+    saveFrameParserConfig(entry.frame_parser, profileId);
+  }
+  saveConfigurationProfiles(backup.profiles.map((entry) => entry.metadata));
+  saveActiveProfileId(backup.active_profile_id);
+  localStorage.setItem(THEME_KEY, backup.theme);
+
+  const importedIds = new Set(backup.profiles.map((entry) => entry.metadata.id));
+  for (const profile of existingProfiles) {
+    if (!importedIds.has(profile.id)) removeConfigurationProfileData(profile.id);
+  }
+  for (const key of [SETTINGS_KEY, SEND_PRESETS_KEY, SEND_EDITOR_KEY, HEX_FRAME_CONFIG_KEY, FRAME_PARSER_CONFIG_KEY]) {
+    localStorage.removeItem(key);
+  }
+}
+
+function normalizeConfigurationBackup(value: unknown): ConfigurationBackup | null {
+  if (!value || typeof value !== "object") return null;
+  const backup = value as Partial<ConfigurationBackup>;
+  if (backup.application !== BACKUP_APPLICATION
+    || backup.version !== BACKUP_VERSION
+    || !isBoundedString(backup.exported_at, 1, 40)
+    || Number.isNaN(Date.parse(backup.exported_at))
+    || (backup.theme !== "light" && backup.theme !== "dark")
+    || !isBoundedString(backup.active_profile_id, 1, 80)
+    || !Array.isArray(backup.profiles)
+    || backup.profiles.length < 1
+    || backup.profiles.length > MAX_CONFIGURATION_PROFILES) return null;
+
+  const profiles = backup.profiles.map(normalizeConfigurationBackupProfile);
+  if (profiles.some((profile) => profile === null)) return null;
+  const normalizedProfiles = profiles as ConfigurationBackupProfile[];
+  const profileIds = normalizedProfiles.map((entry) => entry.metadata.id);
+  if (new Set(profileIds).size !== profileIds.length || !profileIds.includes(backup.active_profile_id)) return null;
+  return {
+    application: BACKUP_APPLICATION,
+    version: BACKUP_VERSION,
+    exported_at: backup.exported_at,
+    theme: backup.theme,
+    active_profile_id: backup.active_profile_id,
+    profiles: normalizedProfiles,
+  };
+}
+
+function normalizeConfigurationBackupProfile(value: unknown): ConfigurationBackupProfile | null {
+  if (!value || typeof value !== "object") return null;
+  const entry = value as Partial<ConfigurationBackupProfile>;
+  const metadata = normalizeConfigurationProfile(entry.metadata);
+  const transport = normalizeBackupTransportSettings(entry.transport);
+  const sendEditor = normalizeBackupSendEditor(entry.send_editor);
+  const hexFrame = normalizeHexFrameConfig(entry.hex_frame);
+  const frameParser = normalizeFrameParserConfig(entry.frame_parser);
+  if (!metadata || !transport || !sendEditor || !hexFrame || !frameParser
+    || Number.isNaN(Date.parse(metadata.created_at))
+    || Number.isNaN(Date.parse(metadata.updated_at))
+    || validateFrameParserConfig(frameParser) !== null
+    || !Array.isArray(entry.send_presets)
+    || entry.send_presets.length > MAX_SEND_PRESETS) return null;
+  const sendPresets = entry.send_presets.map(normalizeBackupSendPreset);
+  if (sendPresets.some((preset) => preset === null)) return null;
+  const normalizedPresets = sendPresets as SendPreset[];
+  if (new Set(normalizedPresets.map((preset) => preset.id)).size !== normalizedPresets.length) return null;
+  return {
+    metadata,
+    transport,
+    send_editor: sendEditor,
+    hex_frame: hexFrame,
+    send_presets: normalizedPresets,
+    frame_parser: frameParser,
+  };
+}
+
+function normalizeBackupSendEditor(value: unknown): SendEditorDraft | null {
+  if (!value || typeof value !== "object") return null;
+  const editor = value as Partial<SendEditorDraft>;
+  if (editor.version !== 1
+    || !isBoundedString(editor.data, 0, 1_048_576)
+    || (editor.format !== "text" && editor.format !== "hex")
+    || (editor.text_encoding !== "utf-8" && editor.text_encoding !== "ascii" && editor.text_encoding !== "gbk")
+    || (editor.line_ending !== "none" && editor.line_ending !== "cr" && editor.line_ending !== "lf" && editor.line_ending !== "crlf")
+    || !isValidInterval(editor.interval_ms)) return null;
+  return {
+    version: 1,
+    data: editor.data,
+    format: editor.format,
+    text_encoding: editor.text_encoding,
+    line_ending: editor.line_ending,
+    interval_ms: editor.interval_ms,
+  };
+}
+
+function normalizeBackupTransportSettings(value: unknown): TransportSettings | null {
+  if (!value || typeof value !== "object") return null;
+  const settings = value as Partial<TransportSettings>;
+  const serial = settings.serial as Partial<SerialConfig> | undefined;
+  const tcpClient = settings.tcpClient as Partial<TcpClientConfig> | undefined;
+  const tcpServer = settings.tcpServer as Partial<TcpServerConfig> | undefined;
+  const udp = settings.udp as Partial<UdpConfig> | undefined;
+  if (settings.version !== 1 || !isTransportMode(settings.mode)
+    || !serial || serial.mode !== "serial"
+    || !isBoundedString(serial.port, 0, 1_024)
+    || !isIntegerInRange(serial.baudrate, 1, 50_000_000)
+    || (serial.bytesize !== 5 && serial.bytesize !== 6 && serial.bytesize !== 7 && serial.bytesize !== 8)
+    || (serial.parity !== "N" && serial.parity !== "E" && serial.parity !== "O" && serial.parity !== "M" && serial.parity !== "S")
+    || (serial.stopbits !== 1 && serial.stopbits !== 1.5 && serial.stopbits !== 2)
+    || !isIntegerInRange(serial.receive_idle_ms, 1, 1_000)
+    || !tcpClient || tcpClient.mode !== "tcp_client"
+    || !isBoundedString(tcpClient.host, 1, 255)
+    || !isIntegerInRange(tcpClient.port, 1, 65_535)
+    || !isFiniteNumber(tcpClient.connect_timeout)
+    || tcpClient.connect_timeout < 0.1 || tcpClient.connect_timeout > 60
+    || typeof tcpClient.auto_reconnect !== "boolean"
+    || !tcpServer || tcpServer.mode !== "tcp_server"
+    || !isBoundedString(tcpServer.host, 1, 255)
+    || !isIntegerInRange(tcpServer.port, 0, 65_535)
+    || !udp || udp.mode !== "udp"
+    || !isBoundedString(udp.local_host, 1, 255)
+    || !isIntegerInRange(udp.local_port, 0, 65_535)
+    || !(udp.remote_host === null || isBoundedString(udp.remote_host, 1, 255))
+    || !(udp.remote_port === null || isIntegerInRange(udp.remote_port, 1, 65_535))
+    || ((udp.remote_host === null) !== (udp.remote_port === null))) return null;
+  return {
+    version: 1,
+    mode: settings.mode,
+    serial: {
+      mode: "serial",
+      port: serial.port,
+      baudrate: serial.baudrate,
+      bytesize: serial.bytesize,
+      parity: serial.parity,
+      stopbits: serial.stopbits,
+      receive_idle_ms: serial.receive_idle_ms,
+    },
+    tcpClient: {
+      mode: "tcp_client",
+      host: tcpClient.host,
+      port: tcpClient.port,
+      connect_timeout: tcpClient.connect_timeout,
+      auto_reconnect: tcpClient.auto_reconnect,
+    },
+    tcpServer: {
+      mode: "tcp_server",
+      host: tcpServer.host,
+      port: tcpServer.port,
+    },
+    udp: {
+      mode: "udp",
+      local_host: udp.local_host,
+      local_port: udp.local_port,
+      remote_host: udp.remote_host,
+      remote_port: udp.remote_port,
+    },
+  };
+}
+
 function normalizeConfigurationProfile(value: unknown): ConfigurationProfile | null {
   if (!value || typeof value !== "object") return null;
   const profile = value as Partial<ConfigurationProfile>;
@@ -457,6 +699,7 @@ function normalizeHexFrameField(value: unknown): HexFrameField | null {
       && isFrameDataType(dataType)
       && isBoundedString(field.value, 0, 2_097_152)
       && isByteOrder(field.byte_order)
+      && generator !== null
       && (source !== "generated" || (generator !== undefined && generator !== null))
       ? {
           ...base,
@@ -577,6 +820,7 @@ function normalizeSendPreset(value: unknown): SendPreset | null {
   const preset = value as Partial<SendPreset>;
   const valid = typeof preset.id === "string"
     && preset.id.length > 0
+    && preset.id.length <= 80
     && typeof preset.name === "string"
     && preset.name.length <= 60
     && typeof preset.data === "string"
@@ -584,11 +828,11 @@ function normalizeSendPreset(value: unknown): SendPreset | null {
     && (preset.format === "text" || preset.format === "hex")
     && (preset.text_encoding === "utf-8" || preset.text_encoding === "ascii" || preset.text_encoding === "gbk")
     && (preset.line_ending === "none" || preset.line_ending === "cr" || preset.line_ending === "lf" || preset.line_ending === "crlf")
-    && typeof preset.updated_at === "string";
+    && typeof preset.updated_at === "string"
+    && preset.updated_at.length <= 40;
   if (!valid) return null;
-  const frameConfig = preset.frame_config === undefined
-    ? undefined
-    : normalizeHexFrameConfig(preset.frame_config) ?? undefined;
+  const frameConfig = preset.frame_config === undefined ? undefined : normalizeHexFrameConfig(preset.frame_config);
+  if (frameConfig === null) return null;
   return {
     id: preset.id!,
     name: preset.name!,
@@ -602,6 +846,17 @@ function normalizeSendPreset(value: unknown): SendPreset | null {
     updated_at: preset.updated_at!,
     ...(frameConfig ? { frame_config: frameConfig } : {}),
   };
+}
+
+function normalizeBackupSendPreset(value: unknown): SendPreset | null {
+  if (!value || typeof value !== "object") return null;
+  const preset = value as Partial<SendPreset>;
+  if (typeof preset.enabled !== "boolean"
+    || typeof preset.auto_send_on_change !== "boolean"
+    || !isValidDelay(preset.delay_ms)
+    || !isBoundedString(preset.updated_at, 1, 40)
+    || Number.isNaN(Date.parse(preset.updated_at))) return null;
+  return normalizeSendPreset(value);
 }
 
 function isValidInterval(value: unknown): value is number {

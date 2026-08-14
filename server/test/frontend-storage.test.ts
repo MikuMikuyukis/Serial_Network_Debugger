@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CONFIGURATION_IMPORT_EVENT_KEY,
   cloneSendPreset,
   copyConfigurationProfileData,
+  createConfigurationBackup,
   frameParserStorageKey,
   hexFrameStorageKey,
+  importConfigurationBackup,
   loadActiveProfileId,
   loadConfigurationProfiles,
   loadHexFrameConfig,
@@ -11,8 +14,10 @@ import {
   loadSendEditor,
   loadSendPresets,
   loadTransportSettings,
+  parseConfigurationBackup,
   removeConfigurationProfileData,
   saveActiveProfileId,
+  saveConfigurationProfiles,
   saveHexFrameConfig,
   saveFrameParserConfig,
   saveSendEditor,
@@ -25,6 +30,7 @@ import type { HexFrameConfig, SendPreset } from "../../frontend/src/types.js";
 
 class MemoryStorage implements Storage {
   readonly #items = new Map<string, string>();
+  #writesBeforeFailure: number | null = null;
 
   get length(): number { return this.#items.size; }
 
@@ -36,11 +42,23 @@ class MemoryStorage implements Storage {
 
   removeItem(key: string): void { this.#items.delete(key); }
 
-  setItem(key: string, value: string): void { this.#items.set(key, value); }
+  setItem(key: string, value: string): void {
+    if (this.#writesBeforeFailure === 0) {
+      this.#writesBeforeFailure = null;
+      throw new DOMException("Storage quota exceeded", "QuotaExceededError");
+    }
+    if (this.#writesBeforeFailure !== null) this.#writesBeforeFailure -= 1;
+    this.#items.set(key, value);
+  }
+
+  failWriteAfter(successfulWrites: number): void { this.#writesBeforeFailure = successfulWrites; }
 }
 
+let memoryStorage: MemoryStorage;
+
 beforeEach(() => {
-  vi.stubGlobal("localStorage", new MemoryStorage());
+  memoryStorage = new MemoryStorage();
+  vi.stubGlobal("localStorage", memoryStorage);
 });
 
 describe("frontend configuration profile storage", () => {
@@ -184,6 +202,115 @@ describe("frontend configuration profile storage", () => {
     expect(loadSendEditor("default").data).toBe("");
     expect(loadFrameParserConfig("default").enabled).toBe(false);
   });
+
+  it("导出并完整恢复全部配置组的发送与接收配置", () => {
+    const now = new Date(0).toISOString();
+    const profiles = [
+      { id: "first", name: "第一组", created_at: now, updated_at: now },
+      { id: "second", name: "第二组", created_at: now, updated_at: now },
+    ];
+    saveConfigurationProfiles(profiles);
+    saveActiveProfileId("second");
+    localStorage.setItem("snd.theme", "dark");
+
+    const firstSettings = loadTransportSettings("first");
+    firstSettings.mode = "tcp_client";
+    firstSettings.tcpClient.port = 9101;
+    saveTransportSettings(firstSettings, "first");
+    saveSendEditor({ ...loadSendEditor("first"), data: "FIRST", format: "hex" }, "first");
+    const firstFrame = frameConfig("first-frame");
+    saveHexFrameConfig(firstFrame, "first");
+    saveSendPresets([{ ...preset("first-preset", "AA"), format: "hex", frame_config: frameConfig("preset-frame") }], "first");
+    saveFrameParserConfig(parserConfig("first-parser", "AA 55"), "first");
+
+    const secondSettings = loadTransportSettings("second");
+    secondSettings.mode = "udp";
+    secondSettings.udp.local_port = 9202;
+    saveTransportSettings(secondSettings, "second");
+    saveSendEditor({ ...loadSendEditor("second"), data: "SECOND" }, "second");
+    saveHexFrameConfig(frameConfig("second-frame"), "second");
+    saveSendPresets([preset("second-preset", "B")], "second");
+    saveFrameParserConfig(parserConfig("second-parser", "10"), "second");
+
+    const backup = createConfigurationBackup();
+    expect(backup).toMatchObject({
+      application: "serial-network-debugger",
+      version: 1,
+      theme: "dark",
+      active_profile_id: "second",
+    });
+    expect(backup.profiles).toHaveLength(2);
+    expect(backup.profiles[0]).toMatchObject({
+      metadata: { id: "first", name: "第一组" },
+      transport: { mode: "tcp_client", tcpClient: { port: 9101 } },
+      send_editor: { data: "FIRST", format: "hex" },
+      hex_frame: { id: "first-frame" },
+      send_presets: [{ id: "first-preset", frame_config: { id: "preset-frame" } }],
+      frame_parser: { id: "first-parser", match_hex: "AA 55" },
+    });
+
+    saveConfigurationProfiles([{ id: "obsolete", name: "旧配置", created_at: now, updated_at: now }]);
+    saveSendEditor({ ...loadSendEditor("obsolete"), data: "OBSOLETE" }, "obsolete");
+    importConfigurationBackup(parseConfigurationBackup(JSON.stringify(backup)));
+
+    expect(loadConfigurationProfiles()).toEqual(profiles);
+    expect(loadActiveProfileId()).toBe("second");
+    expect(localStorage.getItem("snd.theme")).toBe("dark");
+    expect(loadSendEditor("first").data).toBe("FIRST");
+    expect(loadHexFrameConfig("first").id).toBe("first-frame");
+    expect(loadSendPresets("first")[0]?.frame_config?.id).toBe("preset-frame");
+    expect(loadFrameParserConfig("first")).toEqual(parserConfig("first-parser", "AA 55"));
+    expect(loadTransportSettings("second").udp.local_port).toBe(9202);
+    expect(loadSendEditor("obsolete").data).toBe("");
+    expect(localStorage.getItem(CONFIGURATION_IMPORT_EVENT_KEY)).not.toBeNull();
+  });
+
+  it("拒绝损坏、未知版本或含无效嵌套配置的导入文件", () => {
+    loadConfigurationProfiles();
+    const backup = createConfigurationBackup();
+    backup.profiles[0]!.frame_parser = parserConfig("invalid-parser", "AA");
+    backup.profiles[0]!.frame_parser.fields[0]!.offset = -1;
+
+    expect(() => parseConfigurationBackup("not-json")).toThrow("不是有效的 JSON");
+    expect(() => parseConfigurationBackup(JSON.stringify({ ...backup, version: 2 }))).toThrow("格式、版本或内容无效");
+    expect(() => parseConfigurationBackup(JSON.stringify(backup))).toThrow("格式、版本或内容无效");
+  });
+
+  it("拒绝重复配置、重复预设 ID 和缺失的预设配置项", () => {
+    loadConfigurationProfiles();
+    const duplicateProfiles = createConfigurationBackup();
+    duplicateProfiles.profiles.push(structuredClone(duplicateProfiles.profiles[0]!));
+
+    const duplicatePresets = createConfigurationBackup();
+    const duplicatePreset = preset("duplicate", "AA");
+    duplicatePresets.profiles[0]!.send_presets = [duplicatePreset, structuredClone(duplicatePreset)];
+
+    const incompletePreset = createConfigurationBackup();
+    incompletePreset.profiles[0]!.send_presets = [preset("incomplete", "BB")];
+    delete (incompletePreset.profiles[0]!.send_presets[0] as Partial<SendPreset>).enabled;
+
+    expect(() => parseConfigurationBackup(JSON.stringify(duplicateProfiles))).toThrow("格式、版本或内容无效");
+    expect(() => parseConfigurationBackup(JSON.stringify(duplicatePresets))).toThrow("格式、版本或内容无效");
+    expect(() => parseConfigurationBackup(JSON.stringify(incompletePreset))).toThrow("格式、版本或内容无效");
+  });
+
+  it("导入写入失败时恢复原有全部配置", () => {
+    loadConfigurationProfiles();
+    saveSendEditor({ ...loadSendEditor(), data: "ORIGINAL" });
+    const originalSettings = loadTransportSettings();
+    originalSettings.tcpClient.port = 9100;
+    saveTransportSettings(originalSettings);
+    const incoming = createConfigurationBackup();
+    incoming.profiles[0]!.send_editor.data = "IMPORTED";
+    incoming.profiles[0]!.transport.tcpClient.port = 9200;
+
+    memoryStorage.failWriteAfter(2);
+    expect(() => importConfigurationBackup(incoming)).toThrow("Storage quota exceeded");
+    expect(loadSendEditor().data).toBe("ORIGINAL");
+    expect(loadTransportSettings().tcpClient.port).toBe(9100);
+    expect(loadConfigurationProfiles()).toHaveLength(1);
+    expect(localStorage.getItem(CONFIGURATION_IMPORT_EVENT_KEY)).toBeNull();
+  });
 });
 
 function preset(id: string, data: string): SendPreset {
@@ -207,5 +334,35 @@ function frameConfig(id: string): HexFrameConfig {
     id,
     enabled: true,
     fields: [{ id: "head", kind: "header", name: "帧头", value: "AA" }],
+  };
+}
+
+function parserConfig(id: string, matchHex: string) {
+  return {
+    version: 1 as const,
+    id,
+    name: id,
+    enabled: true,
+    minimum_length: 2,
+    match_offset: 0,
+    match_hex: matchHex,
+    fields: [{
+      id: `${id}-field`,
+      name: "温度",
+      offset: 0,
+      byte_length: 2,
+      data_type: "uint" as const,
+      byte_order: "big" as const,
+      bit_index: 0,
+      scale: 0.1,
+      value_offset: -40,
+      decimals: 1,
+      unit: "C",
+      visible: true,
+      display: "trend" as const,
+      minimum: -40,
+      maximum: 120,
+      color: "#0F766E",
+    }],
   };
 }

@@ -69,15 +69,24 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 function applySettings(): void {
+  if (persistPendingState()) closeSettings();
+}
+
+function persistPendingState(): boolean {
   try {
-    buildConfig(draft.value);
-    settings.value = cloneTransportSettings(draft.value);
+    if (modalOpen.value && !sessionActive.value) {
+      buildConfig(draft.value);
+      settings.value = cloneTransportSettings(draft.value);
+    }
     saveTransportSettings(settings.value, props.profileId);
-    closeSettings();
+    return true;
   } catch (error) {
     emit("error", error instanceof Error ? error.message : "通信配置无效");
+    return false;
   }
 }
+
+defineExpose({ persistPendingState });
 
 async function connect(): Promise<void> {
   busy.value = true;

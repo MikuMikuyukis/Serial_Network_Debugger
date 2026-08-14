@@ -63,6 +63,7 @@ const emit = defineEmits<{
 const displayHex = ref(false);
 const autoScroll = ref(true);
 const showTransmitLogs = ref(true);
+const frameAnalyzer = ref<InstanceType<typeof FrameAnalyzer> | null>(null);
 const visibleLogs = computed(() => (
   showTransmitLogs.value ? props.logs : props.logs.filter((log) => log.kind !== "tx")
 ));
@@ -583,15 +584,18 @@ function scheduleEditorSave(): void {
   editorSaveTimer = window.setTimeout(persistEditor, 180);
 }
 
-function persistEditor(): void {
+function persistEditor(): boolean {
   try {
     saveSendEditor({
       version: 1,
       ...editorPayload.value,
       interval_ms: intervalMs.value,
     }, props.profileId);
+    saveHexFrameConfig(frameConfig.value, props.profileId);
+    return true;
   } catch {
     emit("error", "发送区内容保存失败，请检查浏览器本地存储空间");
+    return false;
   }
 }
 
@@ -664,17 +668,21 @@ async function refreshPresetPreview(
   }
 }
 
-function persistPresets(): void {
+function persistPresets(): boolean {
   try {
     saveSendPresets(presets.value, props.profileId);
+    return true;
   } catch {
     emit("error", "发送预设保存失败，请检查浏览器本地存储空间");
+    return false;
   }
 }
 
-function persistPendingState(): void {
-  persistEditor();
-  persistPresets();
+function persistPendingState(): boolean {
+  const editorSaved = persistEditor();
+  const presetsSaved = persistPresets();
+  const parserSaved = frameAnalyzer.value?.persistPendingState() ?? true;
+  return editorSaved && presetsSaved && parserSaved;
 }
 
 defineExpose({ persistPendingState });
@@ -795,6 +803,7 @@ function emitError(error: unknown, fallback: string): void {
           @toggle-sequence="toggleSequence"
         />
         <FrameAnalyzer
+          ref="frameAnalyzer"
           v-show="activeTool === 'dashboard' || activeTool === 'parser'"
           :profile-id="profileId"
           :frames="receivedFrames"

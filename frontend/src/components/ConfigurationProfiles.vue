@@ -23,6 +23,7 @@ const emit = defineEmits<{
 }>();
 
 const profiles = ref<ConfigurationProfile[]>(loadConfigurationProfiles());
+const profileNames = ref<Record<string, string>>(Object.fromEntries(profiles.value.map((profile) => [profile.id, profile.name])));
 const dialogOpen = ref(false);
 const activeProfile = computed(() => profiles.value.find((profile) => profile.id === props.activeProfileId) ?? profiles.value[0]!);
 
@@ -51,6 +52,7 @@ function addProfile(): void {
   const nextProfiles = [...profiles.value, profile];
   if (!persistProfiles(nextProfiles)) return;
   profiles.value = nextProfiles;
+  profileNames.value = { ...profileNames.value, [profile.id]: profile.name };
   selectProfile(profile.id);
 }
 
@@ -72,29 +74,33 @@ function duplicateProfile(profile: ConfigurationProfile): void {
     const nextProfiles = [...profiles.value, duplicate];
     saveConfigurationProfiles(nextProfiles);
     profiles.value = nextProfiles;
+    profileNames.value = { ...profileNames.value, [duplicate.id]: duplicate.name };
   } catch {
     removeConfigurationProfileData(duplicate.id);
     emit("error", "配置复制失败，请检查浏览器本地存储空间");
   }
 }
 
-function renameProfile(profile: ConfigurationProfile, event: Event): void {
-  const name = (event.target as HTMLInputElement).value.trim().slice(0, 40);
-  if (!name) {
-    (event.target as HTMLInputElement).value = profile.name;
-    emit("error", "配置名称不能为空");
-    return;
-  }
-  const previousName = profile.name;
-  const previousUpdatedAt = profile.updated_at;
-  profile.name = name;
-  profile.updated_at = new Date().toISOString();
-  if (!persistProfiles(profiles.value)) {
-    profile.name = previousName;
-    profile.updated_at = previousUpdatedAt;
-    (event.target as HTMLInputElement).value = previousName;
+function persistPendingState(): boolean {
+  try {
+    const now = new Date().toISOString();
+    const nextProfiles = profiles.value.map((profile) => {
+      const name = (profileNames.value[profile.id] ?? profile.name).trim().slice(0, 40);
+      if (!name) throw new Error("配置名称不能为空");
+      return name === profile.name ? profile : { ...profile, name, updated_at: now };
+    });
+    saveConfigurationProfiles(nextProfiles);
+    profiles.value = nextProfiles;
+    profileNames.value = Object.fromEntries(nextProfiles.map((profile) => [profile.id, profile.name]));
+    return true;
+  } catch (error) {
+    profileNames.value = Object.fromEntries(profiles.value.map((profile) => [profile.id, profile.name]));
+    emit("error", error instanceof Error ? error.message : "配置列表保存失败，请检查浏览器本地存储空间");
+    return false;
   }
 }
+
+defineExpose({ persistPendingState });
 
 function removeProfile(profile: ConfigurationProfile): void {
   if (profile.id === props.activeProfileId || profiles.value.length <= 1) return;
@@ -103,6 +109,9 @@ function removeProfile(profile: ConfigurationProfile): void {
     const nextProfiles = profiles.value.filter((item) => item.id !== profile.id);
     saveConfigurationProfiles(nextProfiles);
     profiles.value = nextProfiles;
+    const nextNames = { ...profileNames.value };
+    delete nextNames[profile.id];
+    profileNames.value = nextNames;
     removeConfigurationProfileData(profile.id);
   } catch {
     emit("error", "配置删除失败，请检查浏览器本地存储空间");
@@ -169,7 +178,7 @@ function createProfileId(): string {
         <div class="dialog-body profile-list">
           <article v-for="profile in profiles" :key="profile.id" class="profile-list-item" :class="{ active: profile.id === activeProfileId }">
             <div class="profile-item-main">
-              <input :value="profile.name" maxlength="40" aria-label="配置名称" @change="renameProfile(profile, $event)" />
+              <input v-model="profileNames[profile.id]" maxlength="40" aria-label="配置名称" @change="persistPendingState" />
               <small>{{ profile.id === activeProfileId ? "当前配置" : "独立保存通信参数、发送区与发送预设" }}</small>
             </div>
             <button

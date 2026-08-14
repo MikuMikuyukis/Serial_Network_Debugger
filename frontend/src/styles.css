@@ -131,6 +131,10 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 .bar-icon-button:hover, .icon-tool-button:hover, .icon-button:hover { color: var(--accent); background: var(--surface-hover); }
 .topbar .bar-icon-button { color: var(--topbar-ink); background: #ffffff0d; border-color: #ffffff2e; }
 .topbar .bar-icon-button:hover { color: #fff; background: #ffffff1a; }
+.topbar .bar-icon-button:disabled { color: var(--topbar-muted); background: #ffffff08; opacity: 0.45; }
+.configuration-file-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+.configuration-file-actions .bar-icon-button { width: 31px; height: 31px; }
+.configuration-file-input { display: none; }
 .bar-command {
   min-width: 86px;
   height: 34px;
@@ -488,6 +492,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
   .transport-bar { gap: 10px; padding-left: 10px; }
   .transport-summary { gap: 8px; }
   .transport-actions { gap: 7px; }
+  .configuration-file-actions { gap: 3px; }
   .channel-state { display: none; }
   .bar-command { min-width: 74px; padding-inline: 10px; }
   .console-toolbar { padding-inline: 12px; }

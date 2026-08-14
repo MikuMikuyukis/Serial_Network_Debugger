@@ -189,10 +189,28 @@ commit: 一次用户操作完成，可以触发“帧变化自动发送”
 | `snd.profile.<id>.send-presets.v1` | 当前配置最多 100 条预设 |
 | `snd.profile.<id>.hex-frame-config.v1` | 当前配置的主组帧 |
 | `snd.profile.<id>.frame-parser-config.v1` | 当前配置的 RX 解析 |
+| `snd.configuration-import.v1` | 成功导入后的跨窗口重载通知 |
 
 默认配置会兼容读取旧版未分组 key。存储内容属于不可信输入，`storage.ts` 必须逐字段恢复；新增字段要提供兼容默认值，不能让旧配置整体消失。
 
 复制配置或预设时必须深拷贝并生成新的预设、组帧和解析配置 ID，避免共享序号会话或响应式嵌套引用。
+
+全局 `Ctrl+S` / `Command+S` 由 `App.vue` 捕获，并依次调用配置列表、通信栏、发送控制台和独立解析器暴露的 `persistPendingState()`。各组件必须先校验当前草稿再同步写入，返回 `false` 时顶层不能提示成功。新增可编辑且持久化的配置面板时，也必须接入这条即时保存链路。
+
+配置备份是 `application = "serial-network-debugger"`、`version = 1` 的 JSON 对象，包含 `exported_at`、主题、当前配置 ID 和全部 `profiles`。每个 profile 必须完整包含：
+
+```text
+metadata
+transport
+send_editor
+hex_frame
+send_presets[]（含各自 frame_config）
+frame_parser（含仪表盘显示字段）
+```
+
+导入文件上限为 32 MiB。`storage.ts` 必须在任何写入前逐字段校验版本、数量限制、ID 唯一性、通信参数、组帧嵌套和 RX 解析语义；不能使用兼容读取时的默认值悄悄修复损坏的备份。导入会替换全部 profile：先生成当前配置快照，写入失败则用快照回滚，成功后写入 `snd.configuration-import.v1` 通知其他同源窗口并重新加载当前窗口。导入 UI 在已连接、自动重连或周期发送期间必须保持禁用，并在文件读取和用户确认后再次检查锁定状态。
+
+备份只包含持久配置，不包含 transport 连接、重连/周期任务、日志、统计、帧序号运行会话和趋势点。提高备份版本时应保留旧版本解析或明确拒绝，并为迁移与回滚添加存储测试。
 
 ## 11. RX 帧解析与仪表盘
 
@@ -314,7 +332,7 @@ git diff --check
 
 - 没有认证，服务只应绑定回环或可信局域网，不能直接暴露公网。
 - 没有日志落盘，刷新后内存日志和趋势数据会丢失。
-- 配置只在浏览器/Electron profile 本地保存，尚无导入导出和跨设备同步。
+- 配置默认保存在浏览器/Electron profile，可通过版本化 JSON 手动导入导出，但没有云端或自动跨设备同步。
 - TCP 业务协议分帧尚未提供通用 framing engine。
 - TCP Server 暂不能选择单个客户端发送。
 - 前端复杂交互主要依赖类型检查和手工验证，缺少 Playwright/Vue 组件端到端覆盖。
