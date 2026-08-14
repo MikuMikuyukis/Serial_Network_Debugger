@@ -3,18 +3,32 @@ import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, Menu, shell } from "electron";
 import type { FastifyInstance } from "fastify";
 import { createApp } from "../../server/src/http/app.js";
+import {
+  DESKTOP_HELP,
+  desktopUserDataPath,
+  isLoopbackHost,
+  parseDesktopOptions,
+} from "./options.js";
 
 const desktopDir = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolve(desktopDir, "../../server/public");
-const host = "127.0.0.1";
+const options = readDesktopOptions();
+const defaultUserDataPath = app.getPath("userData");
+app.setPath("userData", desktopUserDataPath(defaultUserDataPath, options.instanceId));
 
 let mainWindow: BrowserWindow | null = null;
 let backend: FastifyInstance | null = null;
 let backendUrl: string | null = null;
 let isClosingBackend = false;
 
-function createWindow(url: string): BrowserWindow {
+interface BackendEndpoint {
+  windowUrl: string;
+  webAddress: string;
+}
+
+function createWindow(url: string, windowTitle: string): BrowserWindow {
   const window = new BrowserWindow({
+    title: windowTitle,
     width: 1280,
     height: 820,
     minWidth: 960,
@@ -35,6 +49,10 @@ function createWindow(url: string): BrowserWindow {
   };
   window.once("ready-to-show", showWindow);
   window.webContents.once("did-finish-load", showWindow);
+  window.on("page-title-updated", (event) => {
+    event.preventDefault();
+    window.setTitle(windowTitle);
+  });
   window.on("closed", () => {
     mainWindow = null;
   });
@@ -75,13 +93,22 @@ function createWindow(url: string): BrowserWindow {
   return window;
 }
 
-async function startBackend(): Promise<string> {
+async function startBackend(): Promise<BackendEndpoint> {
   const nextBackend = await createApp({
     logger: !app.isPackaged,
     publicDir,
   });
   backend = nextBackend;
-  return nextBackend.listen({ host, port: 0 });
+  await nextBackend.listen({ host: options.webHost, port: options.webPort });
+  const address = nextBackend.server.address();
+  if (!address || typeof address === "string") throw new Error("无法读取 Electron 后端监听端口");
+  const localHost = options.webHost === "0.0.0.0"
+    ? "127.0.0.1"
+    : options.webHost === "::" ? "::1" : options.webHost;
+  return {
+    windowUrl: httpUrl(localHost, address.port),
+    webAddress: httpUrl(options.webHost, address.port),
+  };
 }
 
 async function closeBackend(): Promise<void> {
@@ -91,8 +118,10 @@ async function closeBackend(): Promise<void> {
   if (currentBackend) await currentBackend.close();
 }
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) {
+let mainWindowTitle = "Serial Network Debugger";
+
+const hasInstanceLock = app.requestSingleInstanceLock({ instanceId: options.instanceId });
+if (!hasInstanceLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
@@ -101,21 +130,29 @@ if (!hasSingleInstanceLock) {
     mainWindow.show();
     mainWindow.focus();
   });
+  void startDesktop();
+}
 
-  app.whenReady().then(async () => {
-    Menu.setApplicationMenu(null);
-    try {
-      backendUrl = await startBackend();
-      mainWindow = createWindow(backendUrl);
-    } catch (error) {
-      const message = error instanceof Error ? error.stack ?? error.message : String(error);
-      dialog.showErrorBox("Serial Network Debugger 启动失败", message);
-      app.quit();
+async function startDesktop(): Promise<void> {
+  await app.whenReady();
+  Menu.setApplicationMenu(null);
+  try {
+    const endpoint = await startBackend();
+    backendUrl = endpoint.windowUrl;
+    mainWindowTitle = `Serial Network Debugger [${options.instanceId}] - Web ${endpoint.webAddress}`;
+    process.stdout.write(`${mainWindowTitle}\n`);
+    if (!isLoopbackHost(options.webHost)) {
+      process.stderr.write("警告：Web 服务正在非回环地址监听，当前没有身份认证，请仅用于可信网络。\n");
     }
+    mainWindow = createWindow(backendUrl, mainWindowTitle);
+  } catch (error) {
+    const message = error instanceof Error ? error.stack ?? error.message : String(error);
+    dialog.showErrorBox(`Serial Network Debugger [${options.instanceId}] 启动失败`, message);
+    app.quit();
+  }
 
-    app.on("activate", () => {
-      if (!mainWindow && backendUrl) mainWindow = createWindow(backendUrl);
-    });
+  app.on("activate", () => {
+    if (!mainWindow && backendUrl) mainWindow = createWindow(backendUrl, mainWindowTitle);
   });
 }
 
@@ -129,3 +166,23 @@ app.on("before-quit", (event) => {
   isClosingBackend = true;
   void closeBackend().finally(() => app.quit());
 });
+
+function readDesktopOptions(): ReturnType<typeof parseDesktopOptions> {
+  try {
+    const parsed = parseDesktopOptions(process.argv.slice(app.isPackaged ? 1 : 2));
+    if (parsed.help) {
+      process.stdout.write(DESKTOP_HELP);
+      process.exit(0);
+    }
+    return parsed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n\n${DESKTOP_HELP}`);
+    process.exit(1);
+  }
+}
+
+function httpUrl(host: string, port: number): string {
+  const formattedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${formattedHost}:${port}`;
+}
