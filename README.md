@@ -116,13 +116,38 @@ npm start
 
 ## Electron 桌面版
 
-桌面版会在 Electron 主进程中启动现有 Node.js 服务，并使用随机本地端口加载界面。串口、TCP、UDP、周期发送和浏览器版使用同一套后端实现，不需要另外启动服务。
+桌面版会在每个 Electron 实例的主进程中启动一套独享的 Node.js 服务和 `TransportManager`。不同命名实例可以同时运行，并分别连接不同串口或网络设备；每个实例的窗口、浏览器扩展页面、日志和周期发送共享该实例自己的后端，不会共享其他实例的运行状态。
 
 开发机直接启动桌面版：
 
 ```powershell
 npm run desktop
 ```
+
+默认实例沿用升级前的 Electron 配置目录，Web 服务监听 `127.0.0.1` 的自动分配端口，实际地址显示在窗口标题和启动终端。要同时启动两套完全独立的实例，在两个终端分别运行：
+
+```powershell
+npm run desktop -- --instance device-a --web-port 8871
+npm run desktop -- --instance device-b --web-port 8872
+```
+
+随后可在浏览器分别打开 <http://127.0.0.1:8871> 和 <http://127.0.0.1:8872>。浏览器页面与同端口 Electron 窗口共享通信连接、日志和周期任务，但浏览器与 Electron 的本地配置存储彼此独立，需要时可通过 JSON 导入导出配置。不同 `--instance` 使用不同的 Electron `userData` 目录，因此 Electron 中的主题、全局配置和发送预设也相互隔离；重复启动同一个实例 ID 只会聚焦已有窗口。
+
+桌面版启动参数：
+
+```text
+--instance <id>    实例 ID，默认 default，只允许字母、数字、点、下划线和连字符
+--web-host <host>  Web 监听地址，默认 127.0.0.1
+--web-port <port>  Web 监听端口，0 表示自动分配，默认 0
+```
+
+需要让可信局域网中的其他电脑访问某个实例时，可单独开放该实例：
+
+```powershell
+npm run desktop -- --instance device-a --web-host 0.0.0.0 --web-port 8871
+```
+
+当前 Web 接口没有身份认证。非回环监听只能用于受信任网络，不能暴露到公网，并应通过系统防火墙限制来源地址。
 
 生成无需安装、可直接运行的桌面应用目录：
 
@@ -131,6 +156,12 @@ npm run desktop:pack
 ```
 
 Windows 入口为 `release/win-unpacked/Serial Network Debugger.exe`，整个 `win-unpacked` 目录需要一起保留或分发，不需要运行安装程序。`serialport` 包含原生模块，因此应在目标操作系统上安装依赖并打包；Windows、macOS 和 Linux 的桌面产物不能直接跨平台构建复用。
+
+免安装版或安装版 EXE 使用相同参数，例如：
+
+```powershell
+& ".\Serial Network Debugger.exe" --instance device-a --web-port 8871
+```
 
 在 Windows 上生成 NSIS EXE 安装包：
 
@@ -148,6 +179,12 @@ npm exec electron-builder -- --linux AppImage
 ```
 
 不能在 Windows 上构建一次后把同一个 Electron/`serialport` 产物直接用于 macOS 或 Linux。
+
+macOS Finder 通常会复用已运行的应用进程。需要启动另一个命名实例时使用 `open -n`：
+
+```bash
+open -n -a "Serial Network Debugger" --args --instance device-b --web-port 8872
+```
 
 默认只监听 `127.0.0.1`，局域网内其他电脑无法访问。确需开放访问时：
 
@@ -226,4 +263,4 @@ Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 npm run desktop
 ```
 
-Electron 使用单实例锁。代码修改后应关闭已有桌面窗口再重新运行，否则第二次启动只会聚焦旧实例。
+Electron 按 `--instance` 使用独立配置目录和实例锁。同名实例重复启动只会聚焦已有窗口；不同实例名可以并行运行，但必须配置互不冲突的固定 Web 端口或使用自动端口。同一个物理串口通常仍只能由一个实例独占打开。

@@ -64,7 +64,7 @@ Only updating the frontend causes Zod API rejection. Only updating the backend c
 - Float32 and Float64 are fixed at 4 and 8 bytes and use IEEE 754 with the selected byte order.
 - Browser storage is untrusted input. Preserve validation, limits, defaults, legacy default-profile fallback, and per-profile isolation.
 - Closing a detached presets/parser/dashboard window must restore its tab in the main window.
-- Electron remains single-instance, uses a random `127.0.0.1` port, and closes Fastify before quitting.
+- Electron keeps one process per named instance, allows different named instances to run independently, and closes each instance's Fastify backend before quitting.
 
 More detail is in `docs/AI-development-guide.md`.
 

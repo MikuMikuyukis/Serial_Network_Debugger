@@ -16,8 +16,10 @@ Serial Network Debugger 是一个跨 Windows、macOS、Linux 的串口与网络�
   Browser -> Fastify REST/WebSocket -> TransportManager -> Serial/TCP/UDP
 
 Electron 版
-  BrowserWindow -> Electron 内嵌 Fastify(随机回环端口)
-                -> 同一个 TransportManager -> Serial/TCP/UDP
+  Electron instance A -> userData A -> Fastify A -> TransportManager A -> device A
+                      \-> BrowserWindow A / browser on Web port A
+  Electron instance B -> userData B -> Fastify B -> TransportManager B -> device B
+                      \-> BrowserWindow B / browser on Web port B
 ```
 
 不要为 Electron 复制通信核心。Electron 主进程直接调用 `server/src/http/app.ts` 的 `createApp()`。
@@ -53,7 +55,8 @@ Electron 版
 | `server/src/cli.ts` | 浏览器生产服务入口，默认 `127.0.0.1:8765` |
 | `server/test/` | 单元测试、本地存储测试和回环集成测试 |
 | `server/public/` | Vite 生产资源，构建生成但纳入 Git |
-| `desktop/src/main.ts` | Electron 生命周期、窗口、子窗口、安全配置和内嵌服务 |
+| `desktop/src/main.ts` | Electron 多实例生命周期、窗口、子窗口和内嵌服务 |
+| `desktop/src/options.ts` | Electron 实例 ID、Web 监听参数和独立 userData 路径校验 |
 
 ## 4. 通信与实时事件数据流
 
@@ -236,8 +239,11 @@ Electron 的 `setWindowOpenHandler` 只允许同源 `/` 且 `tool` 为 `presets`
 
 `desktop/src/main.ts`：
 
-- 使用单实例锁。
-- 在随机 `127.0.0.1` 端口启动 Fastify。
+- 在读取 session/localStorage 前按 `--instance` 切换 `userData`；`default` 必须继续使用旧目录以兼容现有配置。
+- 实例锁在切换 `userData` 后申请，因此同名实例单例、不同命名实例可以并行。
+- 每个进程创建自己的 Fastify、TransportManager、EventBroker、周期发送器和随机或固定 Web 端口。
+- `--web-host` 默认 `127.0.0.1`，`--web-port` 默认 `0`；非回环监听没有认证，只能用于可信网络。
+- Electron 窗口加载该实例的本机地址；同端口浏览器页面是该实例的扩展客户端，共享后端状态。
 - BrowserWindow 开启 `contextIsolation` 和 sandbox，关闭 `nodeIntegration`。
 - 窗口同时监听 `ready-to-show` 和 `did-finish-load`，避免部分 Windows 环境窗口不显示。
 - 退出前先关闭 Fastify，释放 transport 和端口。
@@ -247,6 +253,15 @@ Electron 的 `setWindowOpenHandler` 只允许同源 `/` 且 `tool` 为 `presets`
 ```powershell
 npm run desktop
 ```
+
+并行实例：
+
+```powershell
+npm run desktop -- --instance device-a --web-port 8871
+npm run desktop -- --instance device-b --web-port 8872
+```
+
+实例 ID 只允许 1 到 40 位 ASCII 字母、数字、点、下划线和连字符，防止命名实例逃逸 `userData/instances`。不同实例必须使用不同 ID；固定 Web 端口也必须互不冲突。浏览器 origin 包含端口，因此不同固定端口的浏览器 localStorage 也自然隔离。
 
 免安装目录：
 
