@@ -62,6 +62,10 @@ const emit = defineEmits<{
 
 const displayHex = ref(false);
 const autoScroll = ref(true);
+const showTransmitLogs = ref(true);
+const visibleLogs = computed(() => (
+  showTransmitLogs.value ? props.logs : props.logs.filter((log) => log.kind !== "tx")
+));
 type WorkspaceTool = "presets" | "dashboard" | "parser";
 const TOOL_ORDER: WorkspaceTool[] = ["presets", "dashboard", "parser"];
 const activeTool = ref<WorkspaceTool>("presets");
@@ -722,35 +726,39 @@ function emitError(error: unknown, fallback: string): void {
           <label class="toggle">
             <input v-model="autoScroll" type="checkbox" />
             <span>自动滚动</span>
-        </label>
-        <button
-          class="icon-tool-button"
-          :class="{ active: toolPanelOpen }"
-          type="button"
-          :title="toolPanelOpen ? '关闭工具面板' : '打开工具面板'"
-          :aria-label="toolPanelOpen ? '关闭工具面板' : '打开工具面板'"
-          @click="toolPanelOpen = !toolPanelOpen"
-        >
-          <PanelRight :size="16" />
-        </button>
-        <button
-          class="icon-tool-button"
-          type="button"
-          :title="paused ? '继续显示' : '暂停显示'"
-          :aria-label="paused ? '继续显示' : '暂停显示'"
-          @click="emit('update:paused', !paused)"
-        >
-          <Play v-if="paused" :size="16" />
-          <Pause v-else :size="16" />
-        </button>
-        <button class="icon-tool-button" type="button" title="清空日志" aria-label="清空日志" @click="emit('clear')">
-          <Eraser :size="16" />
-        </button>
+          </label>
+          <label class="toggle">
+            <input v-model="showTransmitLogs" type="checkbox" />
+            <span>显示发送</span>
+          </label>
+          <button
+            class="icon-tool-button"
+            :class="{ active: toolPanelOpen }"
+            type="button"
+            :title="toolPanelOpen ? '关闭工具面板' : '打开工具面板'"
+            :aria-label="toolPanelOpen ? '关闭工具面板' : '打开工具面板'"
+            @click="toolPanelOpen = !toolPanelOpen"
+          >
+            <PanelRight :size="16" />
+          </button>
+          <button
+            class="icon-tool-button"
+            type="button"
+            :title="paused ? '继续显示' : '暂停显示'"
+            :aria-label="paused ? '继续显示' : '暂停显示'"
+            @click="emit('update:paused', !paused)"
+          >
+            <Play v-if="paused" :size="16" />
+            <Pause v-else :size="16" />
+          </button>
+          <button class="icon-tool-button" type="button" title="清空日志" aria-label="清空日志" @click="emit('clear')">
+            <Eraser :size="16" />
+          </button>
+        </div>
       </div>
-    </div>
 
     <div v-if="!toolOnly" class="traffic-workspace" :class="{ 'tool-panel-open': toolPanelOpen }">
-      <VirtualLog :logs="logs" :display-hex="displayHex" :auto-scroll="autoScroll" />
+      <VirtualLog :logs="visibleLogs" :display-hex="displayHex" :auto-scroll="autoScroll" />
       <aside v-show="toolPanelOpen" class="workspace-tool-panel">
         <header class="workspace-tool-tabs">
           <div role="tablist" aria-label="工具面板">
