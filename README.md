@@ -69,7 +69,7 @@ HEX 帧配置也保存在当前浏览器中。主发送区打开“编辑 HEX �
 
 ## 技术结构
 
-项目已经完全使用 Node.js + TypeScript，不再需要 Python：
+项目技术结构如下：
 
 ```text
 server/src/core/          通信类型、编解码、事件分发和连接管理
