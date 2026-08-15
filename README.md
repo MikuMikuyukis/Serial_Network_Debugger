@@ -210,6 +210,8 @@ open -n -a "Serial Network Debugger" --args --instance device-b --web-port 8872
 
 三个平台全部成功后，工作流会创建对应版本的 GitHub Release，并上传上述文件和 `SHA256SUMS.txt`。Actions 页面中的临时 Artifact 保留 7 天，Release 附件不会受这个期限影响。也可以在 GitHub 的 `Actions` 页面手动重跑该工作流，但正式发布仍只允许来自 `main`。
 
+仓库的 `package-lock.json` 可能只记录生成它的平台所需的 Rollup 原生可选包。为规避 npm 的跨平台 optional dependency 问题，Linux 和 macOS runner 会在 `npm ci` 后显式安装与当前 Rollup 版本一致的平台二进制；不要删除这一步，否则 Windows 上生成的 lockfile 可能导致其他平台在 Vite 构建阶段提示 `Cannot find module @rollup/rollup-*`。
+
 仓库需要允许工作流获得 `contents: write` 权限。如果组织策略禁用了写权限，请在 GitHub 仓库的 `Settings > Actions > General > Workflow permissions` 中允许 GitHub Actions 创建 Release。工作流使用 GitHub 自动提供的 `GITHUB_TOKEN`，不需要在仓库中保存个人令牌。
 
 同一大版本和小版本内，每次准备进入 `main` 的小修改必须把补丁号恰好增加一。应在干净的修改分支开始工作时运行：

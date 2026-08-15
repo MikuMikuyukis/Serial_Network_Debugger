@@ -304,6 +304,10 @@ main 更新
 
 工作流只允许从 `main` 发布，并使用最小的 `contents: write` 权限和 GitHub 自动签发的 `GITHUB_TOKEN`。同名标签如果已经指向其他提交必须立即失败；仅允许同一提交重跑时覆盖附件。三个构建 Artifact 在 Actions 中保留 7 天，最终 Release 附件不受该临时保留期影响。
 
+GitHub Actions 使用原生 Node 24 运行时的官方 Action 版本。更新工作流依赖时需要检查 Action 自身的 `runs.using`，不能只看 `setup-node` 配置的应用 Node 版本；二者是不同的运行时。
+
+当前 `package-lock.json` 在 Windows 生成，npm 的 optional dependency 问题可能导致 `npm ci` 在其他平台漏装 Rollup 原生包。构建矩阵通过 `rollup_package` 为 Linux x64 和 macOS arm64 显式安装与 `frontend/node_modules/rollup` 完全相同版本的二进制包。该步骤必须位于 `npm ci` 之后和 Vite 构建之前，不能把平台二进制版本独立写死。
+
 当前发布目标为 Windows x64 单文件 portable EXE、Linux x64 单文件 AppImage 和同时支持 Intel/Apple Silicon 的 macOS Universal DMG。`serialport` 包含平台原生模块，因此三个产物必须由对应平台 runner 分别安装依赖和构建。Windows 和 macOS 产物尚未签名；需要签名时只能从 GitHub Secrets 注入证书和密码，不能写入仓库。
 
 根、frontend、server 和 lockfile 中的版本必须一致。包元数据不带前缀，例如 `0.1.0`；标签与 Release 使用大写 `V`，例如 `V0.1.0`。同一大版本和小版本内，每个准备进入 `main` 的小修改必须让 patch 恰好增加一；major/minor 只有用户明确指定时才能改变。推荐在干净的修改分支开始时执行：
