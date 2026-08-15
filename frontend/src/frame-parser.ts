@@ -27,10 +27,32 @@ export function parseReceivedFrame(config: FrameParserConfig, hex: string): Fram
   }
 
   try {
+    const values: ParsedFieldValue[] = [];
+    const rawLengths = new Map<string, number>();
+    let dynamicOffset: number | null = null;
+    for (const [index, field] of config.fields.entries()) {
+      const offset: number = dynamicOffset ?? field.offset;
+      const byteLength = resolveFieldByteLength(config.fields, index, data.length, offset, rawLengths);
+      const end: number = offset + byteLength;
+      if (end > data.length) {
+        return { status: "unmatched", message: `${field.name} 超出接收帧长度`, values: [] };
+      }
+      if (field.kind === "fixed") {
+        const expected = parseHexBytes(field.match_hex)!;
+        if (!expected.every((byte, byteIndex) => data[offset + byteIndex] === byte)) {
+          return { status: "unmatched", message: `${field.name} 固定字节不匹配`, values: [] };
+        }
+      } else if (field.kind === "value") {
+        const parsed = decodeField(field, data, offset, byteLength);
+        values.push(parsed);
+        if (field.data_type === "uint") rawLengths.set(field.id, parsedUnsignedLength(field, data.slice(offset, end)));
+      }
+      if (dynamicOffset !== null || field.length_mode !== "fixed") dynamicOffset = end;
+    }
     return {
       status: "matched",
-      message: `已解析 ${config.fields.length} 个字段`,
-      values: config.fields.map((field) => decodeField(field, data)),
+      message: `已解析 ${values.length} 个字段`,
+      values,
     };
   } catch (error) {
     return {
@@ -39,6 +61,18 @@ export function parseReceivedFrame(config: FrameParserConfig, hex: string): Fram
       values: [],
     };
   }
+}
+
+export function reflowFrameParserFields(fields: FrameParserField[]): void {
+  let offset = 0;
+  for (const field of fields) {
+    field.offset = offset;
+    if (field.length_mode === "fixed") offset += field.byte_length;
+  }
+}
+
+export function frameParserMinimumByteLength(fields: FrameParserField[]): number {
+  return fields.reduce((total, field) => total + (field.length_mode === "fixed" ? field.byte_length : 0), 0);
 }
 
 export function validateFrameParserConfig(config: FrameParserConfig): string | null {
@@ -62,6 +96,17 @@ export function validateFrameParserConfig(config: FrameParserConfig): string | n
     if (ids.has(field.id)) return `字段 ID 重复：${field.name}`;
     ids.add(field.id);
   }
+  for (const [index, field] of config.fields.entries()) {
+    if (field.length_mode === "remaining" && config.fields.slice(index + 1).some((candidate) => candidate.length_mode !== "fixed")) {
+      return `${field.name} 后不能再放置另一个变长字段`;
+    }
+    if (field.length_mode !== "field") continue;
+    const sourceIndex = config.fields.findIndex((candidate) => candidate.id === field.length_field_id);
+    const source = config.fields[sourceIndex];
+    if (sourceIndex < 0 || sourceIndex >= index || source?.kind !== "value" || source.data_type !== "uint" || source.length_mode !== "fixed") {
+      return `${field.name} 的长度来源必须是它前面的定长 UInt 字段`;
+    }
+  }
   return null;
 }
 
@@ -69,9 +114,25 @@ function validateField(field: FrameParserField): string | null {
   const label = field.name.trim() || "未命名字段";
   if (!field.id || field.id.length > 80) return `${label} 的字段 ID 无效`;
   if (!field.name.trim() || field.name.length > 60) return "字段名称应为 1 至 60 个字符";
+  if (field.kind !== "fixed" && field.kind !== "value" && field.kind !== "skip") return `${label} 的字段类型无效`;
   if (!Number.isInteger(field.offset) || field.offset < 0 || field.offset > MAX_FRAME_PARSER_BYTES) return `${label} 的起始偏移无效`;
-  if (!Number.isInteger(field.byte_length) || field.byte_length < 1 || field.byte_length > 64) return `${label} 的字节长度应为 1 至 64`;
-  if (field.offset + field.byte_length > MAX_FRAME_PARSER_BYTES) return `${label} 的切片范围过大`;
+  if (!Number.isInteger(field.byte_length) || field.byte_length < 1 || field.byte_length > MAX_FRAME_PARSER_BYTES) return `${label} 的字节长度应为 1 至 ${MAX_FRAME_PARSER_BYTES}`;
+  if (field.length_mode !== "fixed" && field.length_mode !== "remaining" && field.length_mode !== "field") return `${label} 的长度方式无效`;
+  if (field.kind !== "value" && field.length_mode !== "fixed") return `${label} 只能使用定长方式`;
+  if (field.length_mode !== "fixed" && field.data_type !== "hex" && field.data_type !== "text" && field.data_type !== "ascii") {
+    return `${label} 的变长数据只能解析为 HEX 或字符串`;
+  }
+  if (field.length_mode === "field" && !field.length_field_id) return `${label} 必须选择长度来源字段`;
+  if (field.text_encoding !== "utf-8" && field.text_encoding !== "ascii" && field.text_encoding !== "gbk") return `${label} 的字符串编码无效`;
+  if (field.length_mode === "fixed" && field.offset + field.byte_length > MAX_FRAME_PARSER_BYTES) return `${label} 的切片范围过大`;
+  const normalizedMatch = compactHex(field.match_hex);
+  if (field.kind === "fixed") {
+    if (normalizedMatch.length === 0 || normalizedMatch.length % 2 !== 0 || !/^[0-9A-F]+$/i.test(normalizedMatch)) {
+      return `${label} 的固定内容应为完整 HEX 字节`;
+    }
+    if (normalizedMatch.length / 2 !== field.byte_length) return `${label} 的固定内容与字节长度不一致`;
+  }
+  if (field.kind !== "value") return null;
   if ((field.data_type === "float32" && field.byte_length !== 4) || (field.data_type === "float64" && field.byte_length !== 8)) {
     return `${label} 的浮点类型与字节长度不匹配`;
   }
@@ -88,15 +149,16 @@ function validateField(field: FrameParserField): string | null {
   return null;
 }
 
-function decodeField(field: FrameParserField, frame: Uint8Array): ParsedFieldValue {
-  const end = field.offset + field.byte_length;
-  if (end > frame.length) throw new Error(`${field.name} 需要 Byte ${field.offset} 至 ${end - 1}，当前帧仅 ${frame.length} Byte`);
-  const bytes = frame.slice(field.offset, end);
+function decodeField(field: FrameParserField, frame: Uint8Array, offset: number, byteLength: number): ParsedFieldValue {
+  const end = offset + byteLength;
+  if (end > frame.length) throw new Error(`${field.name} 需要 Byte ${offset} 至 ${end - 1}，当前帧仅 ${frame.length} Byte`);
+  const bytes = frame.slice(offset, end);
   const raw = formatBytes(bytes);
-  if (field.data_type === "hex") return textResult(field, raw, raw);
-  if (field.data_type === "ascii") {
-    const value = String.fromCharCode(...bytes).replaceAll("\0", "");
-    return textResult(field, raw, value);
+  if (field.data_type === "hex") return textResult(field, offset, byteLength, raw, raw);
+  if (field.data_type === "text" || field.data_type === "ascii") {
+    const encoding = field.data_type === "ascii" ? "ascii" : field.text_encoding;
+    const value = decodeText(bytes, encoding, field.name).replaceAll("\0", "");
+    return textResult(field, offset, byteLength, raw, value);
   }
 
   let decoded: number;
@@ -118,7 +180,7 @@ function decodeField(field: FrameParserField, frame: Uint8Array): ParsedFieldVal
     const unsigned = decodeUnsigned(bytes, field.byte_order);
     if (field.data_type === "boolean") decoded = Number((unsigned >> BigInt(field.bit_index)) & 1n);
     else if (field.data_type === "int") {
-      const bits = BigInt(field.byte_length * 8);
+      const bits = BigInt(byteLength * 8);
       const sign = 1n << (bits - 1n);
       const signed = (unsigned & sign) === 0n ? unsigned : unsigned - (1n << bits);
       if (signed > BigInt(Number.MAX_SAFE_INTEGER) || signed < BigInt(Number.MIN_SAFE_INTEGER)) {
@@ -138,6 +200,8 @@ function decodeField(field: FrameParserField, frame: Uint8Array): ParsedFieldVal
   const value = field.data_type === "boolean" ? numeric !== 0 : numeric;
   return {
     field_id: field.id,
+    offset,
+    byte_length: byteLength,
     raw,
     value,
     numeric,
@@ -147,8 +211,44 @@ function decodeField(field: FrameParserField, frame: Uint8Array): ParsedFieldVal
   };
 }
 
-function textResult(field: FrameParserField, raw: string, value: string): ParsedFieldValue {
-  return { field_id: field.id, raw, value, numeric: null, formatted: value };
+function textResult(field: FrameParserField, offset: number, byteLength: number, raw: string, value: string): ParsedFieldValue {
+  return { field_id: field.id, offset, byte_length: byteLength, raw, value, numeric: null, formatted: value };
+}
+
+function resolveFieldByteLength(
+  fields: FrameParserField[],
+  index: number,
+  frameLength: number,
+  offset: number,
+  rawLengths: Map<string, number>,
+): number {
+  const field = fields[index]!;
+  if (field.length_mode === "fixed") return field.byte_length;
+  if (field.length_mode === "field") {
+    const byteLength = rawLengths.get(field.length_field_id ?? "");
+    if (byteLength === undefined) throw new Error(`${field.name} 的长度字段尚未解析`);
+    if (byteLength > MAX_FRAME_PARSER_BYTES) throw new Error(`${field.name} 的动态长度超过 ${MAX_FRAME_PARSER_BYTES} Byte`);
+    return byteLength;
+  }
+  const trailingLength = fields.slice(index + 1).reduce((total, candidate) => total + candidate.byte_length, 0);
+  const byteLength = frameLength - offset - trailingLength;
+  if (byteLength < 0) throw new Error(`${field.name} 没有足够字节可供解析`);
+  return byteLength;
+}
+
+function parsedUnsignedLength(field: FrameParserField, bytes: Uint8Array): number {
+  const value = decodeUnsigned(bytes, field.byte_order);
+  if (value > BigInt(MAX_FRAME_PARSER_BYTES)) return MAX_FRAME_PARSER_BYTES + 1;
+  return Number(value);
+}
+
+function decodeText(bytes: Uint8Array, encoding: "utf-8" | "ascii" | "gbk", label: string): string {
+  if (encoding === "ascii" && bytes.some((byte) => byte > 0x7f)) throw new Error(`${label} 包含非 ASCII 字节`);
+  try {
+    return new TextDecoder(encoding === "ascii" ? "utf-8" : encoding, { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error(`${label} 不是有效的 ${encoding.toUpperCase()} 字符串`);
+  }
 }
 
 function decodeUnsigned(bytes: Uint8Array, order: "big" | "little"): bigint {

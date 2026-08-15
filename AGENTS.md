@@ -119,17 +119,26 @@ English: Describe the behavior, reason, and verification.
 - 同一大版本和小版本内，每个准备进入 `main` 的完整小修改都必须让补丁号相对上一版本恰好增加一，例如 `V0.1.0` -> `V0.1.1` -> `V0.1.2`。
 - Major and minor numbers may change only when the user explicitly specifies them. Agents must not infer or choose those numbers.
 - 大版本号和小版本号只能由用户明确指定，AI 不得自行推断或调整。
-- Start a small change from a clean branch with `npm run version:patch`; run `npm run version:check` before committing.
+- Develop every change on a dedicated branch created from the latest clean `main`. Do not develop or create intermediate feature commits directly on `main`.
+- 每次修改都必须从最新且干净的 `main` 创建独立支线，在支线上开发、测试和提交；不得直接在 `main` 上开发或创建中间功能提交。
+- Development commits on a branch are not releases. Do not increment the public package version for every intermediate commit, and pushing a development branch must not build or publish a GitHub Release.
+- 支线上的开发提交不是发布版本，不得为每个中间提交逐次增加公开版本号；推送开发支线也不得触发安装包编译或 GitHub Release。
+- When the branch is ready to merge, first synchronize it with the latest `main`, then run `npm run version:patch` exactly once for that release candidate and run `npm run version:check`. If the user specifies a major or minor version, apply that explicit version instead.
+- 支线准备合并时，先与最新 `main` 同步，再针对本次候选发布恰好执行一次 `npm run version:patch` 并运行 `npm run version:check`；若用户明确指定大版本号或小版本号，则改用用户指定的版本。
 - Keep the versions in root `package.json`, `frontend/package.json`, `server/package.json`, and `package-lock.json` synchronized.
 - Each release version must identify exactly one `main` commit. The release workflow uses tag `V<version>` and must reject an existing tag that belongs to another commit.
-- A push to `main` should contain one release version. Prefer a single release commit or a squash merge so the workflow can validate the transition from the previous `main` version.
+- Merge the completed branch into `main` only after explicit user approval. Prefer a squash merge so one release version identifies one resulting `main` commit.
+- 只有得到用户明确授权后，才能把完成的支线合并到 `main`；优先使用 squash merge，使一个发布版本只对应一个最终的 `main` 提交。
+- Only a release commit pushed to `main` triggers GitHub Actions packaging, the `V<version>` tag, and the GitHub Release. A push to `main` must contain exactly one release version; branch pushes and local commits are not releases.
+- 只有发布提交被推送到 `main` 后，才由 GitHub Actions 编译安装包、创建 `V<version>` 标签并发布 GitHub Release。一次 `main` 推送必须只包含一个发布版本；支线推送和本地提交都不是发布。
 
 ## 10. Branches, Merge, and Push / 分支、合并与推送
 
 - Do not push commits or branches unless the user explicitly requests it.
 - 除非用户明确要求，否则不要向 GitHub 推送。
-- Use a dedicated branch for authentication, permissions, secrets, migrations, release/deployment configuration, core architecture, destructive behavior, or broad dependency upgrades.
-- Test and commit high-risk work on that branch, then wait for explicit user approval before merging into `main`.
+- Use a dedicated branch for every code, configuration, or documentation change. This is mandatory, not limited to high-risk work.
+- 所有代码、配置和文档修改都必须使用独立支线，这不是仅针对高风险修改的可选要求。
+- Test and commit work on that branch, then wait for explicit user approval before merging or pushing `main`.
 - Before a requested push, confirm the intended branch, fetch the remote, inspect divergence, and push only the requested branch.
 - Do not merge old local feature branches merely because they exist. Several retained branches may already be ancestors of `main` and are historical references.
 - Never force-push, reset hard, or delete branches/tags without explicit authorization.

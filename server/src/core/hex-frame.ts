@@ -1,4 +1,4 @@
-import { parseHex } from "./codec.js";
+import { encodePayload, parseHex } from "./codec.js";
 import { executeCustomChecksumScript } from "./custom-checksum-sandbox.js";
 import type {
   ByteOrder,
@@ -258,6 +258,13 @@ function encodeDataField(
       throw new Error(`${field.name || "数据字段"} 必须是 ${field.byte_length} 字节`);
     }
     if (field.byte_order === "little" && data.length > 1) data = Buffer.from(data).reverse();
+    return data;
+  }
+  if (field.data_type === "text") {
+    const data = encodePayload(value, "text", field.text_encoding ?? "utf-8", "none");
+    if (field.byte_length !== null && data.length !== field.byte_length) {
+      throw new Error(`${field.name || "字符串字段"} 编码后必须是 ${field.byte_length} 字节，当前为 ${data.length} 字节`);
+    }
     return data;
   }
   if (field.data_type === "float32" || field.data_type === "float64") {

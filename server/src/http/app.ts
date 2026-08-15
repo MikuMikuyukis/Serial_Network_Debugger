@@ -3,12 +3,12 @@ import { dirname, resolve } from "node:path";
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
-import { SerialPort } from "serialport";
 import { ZodError } from "zod";
 import { encodePayload } from "../core/codec.js";
 import { buildHexFrame, containsCustomChecksum, HexFrameSession } from "../core/hex-frame.js";
 import { EventBroker } from "../core/event-broker.js";
 import { PeriodicSender } from "../core/periodic-sender.js";
+import { listSerialPorts } from "../core/serial-ports.js";
 import { APPLICATION_VERSION } from "../version.js";
 import {
   periodicSendRequestSchema,
@@ -47,20 +47,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.get("/api/status", async () => manager.snapshot());
   app.get("/api/periodic-send", async () => periodicSender.snapshot());
 
-  app.get("/api/serial/ports", async () => {
-    const ports = await SerialPort.list();
-    return ports
-      .map((port) => {
-        const extended = port as typeof port & { friendlyName?: string };
-        return {
-          device: port.path,
-          description: extended.friendlyName ?? port.manufacturer ?? null,
-          manufacturer: port.manufacturer ?? null,
-          hwid: port.pnpId ?? null,
-        };
-      })
-      .sort((left, right) => left.device.localeCompare(right.device, undefined, { numeric: true }));
-  });
+  app.get("/api/serial/ports", async () => listSerialPorts());
 
   app.post("/api/connect", async (request, reply) => {
     try {

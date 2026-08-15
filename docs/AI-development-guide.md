@@ -106,6 +106,7 @@ ConnectionBar
 - TCP Server 的发送会广播给全部已连接客户端。
 - UDP 配置固定远端时发往固定地址；未配置时发往最近一个数据报来源。
 - 串口一般由一个进程独占。浏览器服务和 Electron 不应同时连接同一串口。
+- macOS 上 `SerialPort.list()` 不一定返回 `socat` 创建的 PTY；`server/src/core/serial-ports.ts` 会补充枚举名称匹配 `/dev/ttys[0-9a-f]{3,}` 的设备。该补充只用于 Darwin，不应把任意 `/dev` 条目暴露为串口。
 
 ## 6. HTTP 与 WebSocket 接口
 
@@ -151,6 +152,8 @@ ConnectionBar
 - `checksum`：CRC、SUM、XOR、自定义 JS 和字段 ID 范围
 
 核心实现在 `server/src/core/hex-frame.ts`。处理顺序是固定字段/数据编码、长度占位与计算、校验占位与计算、最终拼接。完整帧最大 4 MiB。一个配置可放置多个校验字段，但前面的校验不能引用自身或尚未计算的后续校验字段。
+
+数据字段的 `data_type === "text"` 会按 `text_encoding` 编码为 UTF-8、ASCII 或 GBK 字节后嵌入 HEX 帧。`byte_length === null` 表示采用编码后的实际长度；指定长度时必须与编码结果严格相等。长度字段计算的是最终编码字节数，不是 JavaScript 字符数。前端存储恢复、运行时 Schema 和服务端组帧必须同步接受这些字段，不能只在 UI 中增加选项。
 
 `checksum` 字段的 `method` 为 `crc`、`sum`、`xor` 或 `custom_js`，`byte_length` 控制输出宽度。CRC 支持 8/16/32 位内置参数和自定义参数，CRC 输出长度必须等于位宽。旧配置缺少 `method`、`byte_length`、`parameters.width` 和 `script` 时，Schema 与 `storage.ts` 会分别补为 `crc`、2、16 和空字符串。
 
@@ -238,15 +241,26 @@ frame_parser（含仪表盘显示字段）
 
 ## 11. RX 帧解析与仪表盘
 
-RX 解析完全在浏览器端执行。`useCommunication` 保存最近接收记录，`frame-parser.ts` 根据固定 HEX、Byte 偏移、长度、类型和大小端提取数据。
+RX 解析完全在浏览器端执行。`useCommunication` 保存最近接收记录，`frame-parser.ts` 按配置数组顺序解析字段；`FrameAnalyzer.vue` 中的字段移动、添加和删除会重新计算连续 Byte 偏移，避免让用户手工维护重叠切片。
 
-支持 UInt、Int、Float32、Float64、BCD、Boolean、HEX、ASCII。数值可以应用倍率、偏移、小数位与单位，并以数字、半圆仪表、趋势、进度条或状态显示。
+界面一级字段只提供固定字节、跳过字节、帧长度、定长数据和变长数据。底层继续用 `kind` 区分固定匹配、数值和跳过字段，用 `length_mode` 区分固定长度、剩余字节和长度字段引用：
+
+- 固定字节必须与 `match_hex` 完全匹配，可用于帧头、功能码或帧尾，不产生仪表值。
+- 跳过字节只推进偏移，不产生仪表值。
+- 帧长度是定长 UInt 值字段，可被后续变长字段通过 `length_field_id` 引用。
+- 定长数据可解析 UInt、Int、Float32、Float64、BCD、Boolean、HEX 或字符串。
+- 变长数据只解析 HEX 或字符串，长度来自前置定长 UInt 字段，或采用扣除后续定长字段后的剩余字节。
+- 字符串使用 `text_encoding` 解码 UTF-8、ASCII 或 GBK；旧 `ascii` 类型仍为已保存配置保留兼容读取。
+
+数值可以应用倍率、偏移、小数位与单位，并以数字、半圆仪表、趋势、进度条或状态显示。
 
 重要边界：
 
 - 当前一条 RX 日志被视为一帧。
 - TCP 没有天然帧边界，解析正确性依赖实际协议分帧。
-- 最多 32 个解析字段，每个字段最长 64 Byte。
+- 最多 32 个解析字段，累计布局上限为 65,535 Byte。
+- `length_field_id` 只能引用当前字段之前的定长 UInt 字段；删除该字段必须清除引用。
+- 变长字段后允许存在定长帧尾或其他定长字段，解析剩余长度时必须为这些尾部字段预留字节。
 - 趋势每个窗口只保留最近 240 点，不持久化。
 - 不要把大批量趋势历史写入 localStorage。
 
@@ -311,7 +325,7 @@ main 更新
   -> 创建或更新当前提交的 V<version> GitHub Release
 ```
 
-工作流只允许从 `main` 发布，并使用最小的 `contents: write` 权限和 GitHub 自动签发的 `GITHUB_TOKEN`。同名标签如果已经指向其他提交必须立即失败；仅允许同一提交重跑时覆盖附件。三个构建 Artifact 在 Actions 中保留 7 天，最终 Release 附件不受该临时保留期影响。
+工作流只允许从 `main` 发布，并使用最小的 `contents: write` 权限和 GitHub 自动签发的 `GITHUB_TOKEN`。支线提交和支线推送不是发布版本，不应触发安装包编译、Git 标签或 GitHub Release；只有候选发布合并并推送到 `main` 后才执行完整发布。手动重跑也只能针对 `main` 上的同一发布提交。同名标签如果已经指向其他提交必须立即失败；仅允许同一提交重跑时覆盖附件。三个构建 Artifact 在 Actions 中保留 7 天，最终 Release 附件不受该临时保留期影响。
 
 三个 `release:*` 构建脚本必须显式传入 `--publish never`。electron-builder 26 会在 CI 环境中隐式尝试发布，若不禁用，会在已经生成 AppImage 或 DMG 后因构建作业没有个人 `GH_TOKEN` 而失败。构建作业的职责只限于生成并上传临时 Artifact；只有最终 `release` 作业可以使用 `${{ github.token }}` 创建或更新 GitHub Release。不要为了规避该错误向构建矩阵注入个人令牌。
 
@@ -321,14 +335,32 @@ GitHub Actions 使用原生 Node 24 运行时的官方 Action 版本。更新工
 
 当前发布目标为 Windows x64 单文件 portable EXE、Linux x64 单文件 AppImage 和同时支持 Intel/Apple Silicon 的 macOS Universal DMG。`serialport` 包含平台原生模块，因此三个产物必须由对应平台 runner 分别安装依赖和构建。Windows 和 macOS 产物尚未签名；需要签名时只能从 GitHub Secrets 注入证书和密码，不能写入仓库。
 
-根、frontend、server 和 lockfile 中的版本必须一致。包元数据不带前缀，例如 `0.1.0`；标签与 Release 使用大写 `V`，例如 `V0.1.0`。同一大版本和小版本内，每个准备进入 `main` 的小修改必须让 patch 恰好增加一；major/minor 只有用户明确指定时才能改变。推荐在干净的修改分支开始时执行：
+根、frontend、server 和 lockfile 中的版本必须一致。包元数据不带前缀，例如 `0.1.0`；标签与 Release 使用大写 `V`，例如 `V0.1.0`。同一大版本和小版本内，每个准备进入 `main` 的小修改必须让 patch 恰好增加一；major/minor 只有用户明确指定时才能改变。
+
+所有代码、配置和文档修改都必须从最新且干净的 `main` 创建独立支线，在支线上开发、测试和提交。支线中的中间提交沿用当前公开版本，不为每个提交逐次增加版本号。准备合并时，先让支线同步最新 `main`，确认本次合并仍对应下一个公开版本，再针对整个候选发布只执行一次：
 
 ```powershell
 npm run version:patch
 npm run version:check
 ```
 
-每个版本只能对应一个 `main` 提交。一次 push 如果跨过多个 patch，工作流会因相对 push 前版本不是 `+1` 而失败，因此应让一次 `main` 更新只包含一个待发布版本，必要时使用 squash merge。
+完成验证后在支线提交候选发布，等待用户明确授权，再合并并推送 `main`。优先使用 squash merge，让支线上的多个开发提交在 `main` 上形成一个发布提交。每个版本只能对应一个 `main` 提交；一次 push 如果跨过多个 patch，工作流会因相对 push 前版本不是 `+1` 而失败。
+
+发布边界如下：
+
+```text
+最新 main
+  -> 创建独立支线
+  -> 支线开发、测试和提交（不发布，不逐提交增加版本）
+  -> 同步最新 main
+  -> 候选发布只增加一次版本并完成验证
+  -> 用户明确批准合并与推送
+  -> squash merge 为一个 main 发布提交
+  -> 推送 main
+  -> GitHub Actions 编译安装包、创建 V<version> 标签和 Release
+```
+
+禁止直接在 `main` 上开发或堆叠中间功能提交。默认也不得自行合并或推送 `main`；用户只要求本地开发或支线提交时，工作必须停留在支线，不能因此触发公开发布。
 
 如果环境存在 `ELECTRON_RUN_AS_NODE=1`，仅在当前终端清除后再启动：
 
@@ -370,7 +402,7 @@ npm run build
 git diff --check
 ```
 
-截至 2026-08-15 当前基线：14 个测试文件、113 项测试通过，前端/服务端/Electron 类型检查和完整构建通过。后续新增测试后应更新这里和 README 中涉及的数字，或者改为不写固定数量。
+截至 2026-08-15 当前基线：15 个测试文件、123 项测试通过，前端/服务端/Electron 类型检查和完整构建通过。后续新增测试后应更新这里和 README 中涉及的数字，或者改为不写固定数量。
 
 测试使用本机回环 TCP/UDP，不需要物理串口。如果 Electron 或旧开发服务器正在运行，可能造成端口或计时竞争；先停止项目进程再重试。
 
@@ -381,7 +413,9 @@ git diff --check
 - 每次完成修改都创建本地 commit。
 - commit 标题和必要正文必须中英文双语。
 - 默认不 push，用户明确要求才 push。
-- 高风险修改走独立分支，测试提交后等待用户确认再合并 `main`。
+- 所有修改都走独立支线；支线提交和推送不发布，也不为每个中间提交增加版本。
+- 准备合并时同步最新 `main`，为整个候选发布只增加一次版本，验证后等待用户确认。
+- 只有用户批准合并并把发布提交推送到 `main` 后，Actions 才编译并创建标签与 GitHub Release。
 - 当前发布线从 `V0.1.0` 开始；同一 major/minor 内每个 `main` 小修改只允许 patch `+1`，major/minor 由用户控制。
 - 不提交密钥、`.env`、日志、`release/`、`server/dist/` 或 `desktop/dist/`。
 - 不要合并仅因为“还存在”的旧功能分支；先确认其是否已经是 `main` 祖先。

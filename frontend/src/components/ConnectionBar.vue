@@ -229,10 +229,6 @@ function portLabel(port: SerialPortInfo): string {
     : port.device;
 }
 
-function hasDetectedPort(device: string): boolean {
-  return serialPorts.value.some((port) => port.device === device);
-}
-
 onMounted(() => {
   window.addEventListener("keydown", handleKeydown);
   void refreshPorts();
@@ -297,15 +293,18 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
           <fieldset :disabled="busy" class="settings-fields">
             <div v-if="draft.mode === 'serial'" class="dialog-grid">
               <label class="field span-2">
-                <span>串口设备</span>
+                <span>串口设备或路径</span>
                 <span class="input-row">
-                  <select v-model="draft.serial.port">
-                    <option value="">请选择串口</option>
-                    <option v-if="draft.serial.port && !hasDetectedPort(draft.serial.port)" :value="draft.serial.port">
-                      {{ draft.serial.port }} - 当前未检测到
-                    </option>
-                    <option v-for="port in serialPorts" :key="port.device" :value="port.device">{{ portLabel(port) }}</option>
-                  </select>
+                  <input
+                    v-model.trim="draft.serial.port"
+                    list="serial-port-options"
+                    autocomplete="off"
+                    placeholder="/dev/ttys002"
+                    required
+                  />
+                  <datalist id="serial-port-options">
+                    <option v-for="port in serialPorts" :key="port.device" :value="port.device" :label="portLabel(port)" />
+                  </datalist>
                   <button class="icon-button" type="button" title="刷新串口列表" aria-label="刷新串口列表" :disabled="refreshingPorts" @click="refreshPorts">
                     <RefreshCw :size="17" :class="{ spinning: refreshingPorts }" />
                   </button>

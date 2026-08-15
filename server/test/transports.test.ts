@@ -102,6 +102,7 @@ describe("network transports", () => {
     }, broker);
     await client.start();
     cleanup.push(() => client.stop());
+    await waitUntil(() => acceptedConnections === 1);
 
     const reconnecting = nextEvent(
       broker,
@@ -124,6 +125,7 @@ describe("network transports", () => {
       type: "status",
       status: { connected: true, details: { reconnecting: false } },
     });
+    await waitUntil(() => acceptedConnections === 2);
     expect(acceptedConnections).toBe(2);
   });
 
@@ -167,3 +169,11 @@ describe("network transports", () => {
     socket.close();
   });
 });
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("等待测试条件超时");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}

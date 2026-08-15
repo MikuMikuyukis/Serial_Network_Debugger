@@ -36,6 +36,26 @@ describe("transport schemas", () => {
 });
 
 describe("HEX frame schemas", () => {
+  it("字符串载荷默认使用 UTF-8 编码", () => {
+    const parsed = hexFrameConfigSchema.parse({
+      version: 1,
+      id: "text-payload",
+      enabled: true,
+      fields: [{
+        id: "payload",
+        name: "字符串载荷",
+        kind: "data",
+        byte_length: null,
+        source: "fixed",
+        data_type: "text",
+        value: "你好",
+        byte_order: "big",
+      }],
+    });
+
+    expect(parsed.fields[0]).toMatchObject({ data_type: "text", text_encoding: "utf-8" });
+  });
+
   it("把旧版 CRC16 校验字段补全为通用 CRC 校验", () => {
     const parsed = hexFrameConfigSchema.parse({
       version: 1,

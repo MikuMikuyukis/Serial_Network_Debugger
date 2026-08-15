@@ -47,7 +47,8 @@ export interface HexFrameDataField extends HexFrameFieldBase {
   kind: "data";
   byte_length: FrameByteLength | null;
   source: "fixed" | "editor" | "generated";
-  data_type: "hex" | "uint" | "int" | "float32" | "float64" | "bcd";
+  data_type: "hex" | "text" | "uint" | "int" | "float32" | "float64" | "bcd";
+  text_encoding?: TextEncoding;
   value: string;
   byte_order: ByteOrder;
   generator?: HexFrameGenerator;

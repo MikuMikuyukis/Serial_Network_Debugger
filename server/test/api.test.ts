@@ -157,7 +157,7 @@ describe("HTTP and WebSocket API", () => {
       url: "/api/connect",
       payload: { mode: "tcp_server", host: "127.0.0.1", port: 0 },
     });
-    expect(first.statusCode).toBe(200);
+    expect(first.statusCode, first.body).toBe(200);
     const firstPort = (first.json() as { details: { port: number } }).details.port;
 
     const second = await app.inject({
@@ -215,9 +215,10 @@ describe("HTTP and WebSocket API", () => {
       client.once("error", reject);
     });
 
+    await waitForTcpServerClient(app);
     const firstData = waitForSocketData(client);
     const first = await app.inject({ method: "POST", url: "/api/send", payload });
-    expect(first.statusCode).toBe(200);
+    expect(first.statusCode, first.body).toBe(200);
     expect((await firstData).toString("hex").toUpperCase()).toBe(previewBody.hex.replaceAll(" ", ""));
     expect(first.json()).toMatchObject({ frame_sequences: { sequence: "21" } });
 
@@ -291,6 +292,7 @@ describe("HTTP and WebSocket API", () => {
       client.once("connect", resolve);
       client.once("error", reject);
     });
+    await waitForTcpServerClient(app);
     const received: number[] = [];
     client.on("data", (data) => received.push(...data));
 
@@ -306,7 +308,7 @@ describe("HTTP and WebSocket API", () => {
         frame_config: sequenceFrameConfig("api-periodic-frame", "30", false),
       },
     });
-    expect(started.statusCode).toBe(200);
+    expect(started.statusCode, started.body).toBe(200);
     expect(started.json()).toMatchObject({ sent_count: 1, frame_sequences: { sequence: "31" } });
 
     await waitUntil(() => received.length >= 3);
@@ -336,9 +338,17 @@ function sequenceFrameConfig(id: string, sequence: string, includeEditorData = t
   };
 }
 
-async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+async function waitForTcpServerClient(app: Awaited<ReturnType<typeof createApp>>): Promise<void> {
+  await waitUntil(async () => {
+    const response = await app.inject({ method: "GET", url: "/api/status" });
+    const status = response.json() as { details: { client_count?: number } };
+    return (status.details.client_count ?? 0) > 0;
+  });
+}
+
+async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs = 2_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error("等待测试条件超时");
     await new Promise((resolve) => setTimeout(resolve, 10));
   }

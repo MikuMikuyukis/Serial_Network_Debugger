@@ -6,6 +6,8 @@ import type {
   FrameParserDataType,
   FrameParserDisplay,
   FrameParserField,
+  FrameParserFieldKind,
+  FrameParserLengthMode,
   SendEditorDraft,
   SendPreset,
   TcpClientConfig,
@@ -670,7 +672,7 @@ function normalizeFrameParserConfig(value: unknown): FrameParserConfig | null {
   if (fields.some((field) => field === null)) return null;
   const normalizedFields = fields as FrameParserField[];
   if (new Set(normalizedFields.map((field) => field.id)).size !== normalizedFields.length) return null;
-  return {
+  const normalized: FrameParserConfig = {
     version: 1,
     id: config.id,
     name: config.name,
@@ -680,16 +682,29 @@ function normalizeFrameParserConfig(value: unknown): FrameParserConfig | null {
     match_hex: config.match_hex,
     fields: normalizedFields,
   };
+  return validateFrameParserConfig(normalized) === null ? normalized : null;
 }
 
 function normalizeFrameParserField(value: unknown): FrameParserField | null {
   if (!value || typeof value !== "object") return null;
   const field = value as Partial<FrameParserField>;
+  const kind: FrameParserFieldKind = field.kind === undefined ? "value" : field.kind;
+  const lengthMode: FrameParserLengthMode = field.length_mode === undefined ? "fixed" : field.length_mode;
+  const lengthFieldId = field.length_field_id === undefined ? null : field.length_field_id;
+  const matchHex = field.match_hex === undefined ? "" : field.match_hex;
+  const textEncoding = field.text_encoding === undefined
+    ? (field.data_type === "ascii" ? "ascii" : "utf-8")
+    : field.text_encoding;
   if (!isBoundedString(field.id, 1, 80)
     || !isBoundedString(field.name, 1, 60)
+    || !isFrameParserFieldKind(kind)
     || !isIntegerInRange(field.offset, 0, 65_535)
-    || !isIntegerInRange(field.byte_length, 1, 64)
+    || !isIntegerInRange(field.byte_length, 1, 65_535)
+    || !isFrameParserLengthMode(lengthMode)
+    || !isFrameRangeId(lengthFieldId)
+    || !isBoundedString(matchHex, 0, 191)
     || !isFrameParserDataType(field.data_type)
+    || !isTextEncoding(textEncoding)
     || !isByteOrder(field.byte_order)
     || !isIntegerInRange(field.bit_index, 0, 511)
     || !isFiniteNumber(field.scale)
@@ -703,12 +718,27 @@ function normalizeFrameParserField(value: unknown): FrameParserField | null {
     || field.minimum >= field.maximum
     || typeof field.color !== "string"
     || !/^#[0-9A-F]{6}$/i.test(field.color)) return null;
-  return field as FrameParserField;
+  return {
+    ...field,
+    kind,
+    length_mode: lengthMode,
+    length_field_id: lengthFieldId,
+    match_hex: matchHex,
+    text_encoding: textEncoding,
+  } as FrameParserField;
+}
+
+function isFrameParserFieldKind(value: unknown): value is FrameParserFieldKind {
+  return value === "fixed" || value === "value" || value === "skip";
+}
+
+function isFrameParserLengthMode(value: unknown): value is FrameParserLengthMode {
+  return value === "fixed" || value === "remaining" || value === "field";
 }
 
 function isFrameParserDataType(value: unknown): value is FrameParserDataType {
   return value === "uint" || value === "int" || value === "float32" || value === "float64"
-    || value === "bcd" || value === "boolean" || value === "hex" || value === "ascii";
+    || value === "bcd" || value === "boolean" || value === "hex" || value === "text" || value === "ascii";
 }
 
 function isFrameParserDisplay(value: unknown): value is FrameParserDisplay {
@@ -764,10 +794,14 @@ function normalizeHexFrameField(value: unknown): HexFrameField | null {
     const byteLength = field.byte_length;
     const source = field.source;
     const dataType = field.data_type;
+    const textEncoding = field.text_encoding === undefined
+      ? (dataType === "text" ? "utf-8" : undefined)
+      : field.text_encoding;
     const generator = field.generator === undefined ? undefined : normalizeFrameGenerator(field.generator);
     return (byteLength === null || isFrameByteLength(byteLength))
       && isDataSource(source)
       && isFrameDataType(dataType)
+      && (textEncoding === undefined || isTextEncoding(textEncoding))
       && isBoundedString(field.value, 0, 2_097_152)
       && isByteOrder(field.byte_order)
       && generator !== null
@@ -780,6 +814,7 @@ function normalizeHexFrameField(value: unknown): HexFrameField | null {
           data_type: dataType,
           value: field.value,
           byte_order: field.byte_order,
+          ...(textEncoding ? { text_encoding: textEncoding } : {}),
           ...(generator ? { generator } : {}),
         }
       : null;
@@ -882,8 +917,12 @@ function isDataSource(value: unknown): value is "fixed" | "editor" | "generated"
   return value === "fixed" || value === "editor" || value === "generated";
 }
 
-function isFrameDataType(value: unknown): value is "hex" | "uint" | "int" | "float32" | "float64" | "bcd" {
-  return value === "hex" || value === "uint" || value === "int" || value === "float32" || value === "float64" || value === "bcd";
+function isFrameDataType(value: unknown): value is "hex" | "text" | "uint" | "int" | "float32" | "float64" | "bcd" {
+  return value === "hex" || value === "text" || value === "uint" || value === "int" || value === "float32" || value === "float64" || value === "bcd";
+}
+
+function isTextEncoding(value: unknown): value is import("./types").TextEncoding {
+  return value === "utf-8" || value === "ascii" || value === "gbk";
 }
 
 function isGeneratorControl(value: unknown): value is import("./types").FrameGeneratorControl {

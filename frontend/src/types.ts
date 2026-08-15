@@ -47,7 +47,8 @@ export interface HexFrameDataField extends HexFrameFieldBase {
   kind: "data";
   byte_length: FrameByteLength | null;
   source: "fixed" | "editor" | "generated";
-  data_type: "hex" | "uint" | "int" | "float32" | "float64" | "bcd";
+  data_type: "hex" | "text" | "uint" | "int" | "float32" | "float64" | "bcd";
+  text_encoding?: TextEncoding;
   value: string;
   byte_order: ByteOrder;
   generator?: HexFrameGenerator;
@@ -175,15 +176,22 @@ export interface SendEditorDraft extends SendPayload {
   interval_ms: number;
 }
 
-export type FrameParserDataType = "uint" | "int" | "float32" | "float64" | "bcd" | "boolean" | "hex" | "ascii";
+export type FrameParserDataType = "uint" | "int" | "float32" | "float64" | "bcd" | "boolean" | "hex" | "text" | "ascii";
 export type FrameParserDisplay = "number" | "gauge" | "trend" | "bar" | "status";
+export type FrameParserFieldKind = "fixed" | "value" | "skip";
+export type FrameParserLengthMode = "fixed" | "remaining" | "field";
 
 export interface FrameParserField {
   id: string;
   name: string;
+  kind: FrameParserFieldKind;
   offset: number;
   byte_length: number;
+  length_mode: FrameParserLengthMode;
+  length_field_id: string | null;
+  match_hex: string;
   data_type: FrameParserDataType;
+  text_encoding: TextEncoding;
   byte_order: ByteOrder;
   bit_index: number;
   scale: number;
@@ -218,6 +226,8 @@ export interface ReceivedFrame {
 
 export interface ParsedFieldValue {
   field_id: string;
+  offset: number;
+  byte_length: number;
   raw: string;
   value: number | string | boolean;
   numeric: number | null;

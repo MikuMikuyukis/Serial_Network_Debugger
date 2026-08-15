@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseReceivedFrame, validateFrameParserConfig } from "../../frontend/src/frame-parser.js";
+import { parseReceivedFrame, reflowFrameParserFields, validateFrameParserConfig } from "../../frontend/src/frame-parser.js";
 import type { FrameParserConfig, FrameParserField } from "../../frontend/src/types.js";
 
 describe("RX frame parser", () => {
@@ -36,11 +36,82 @@ describe("RX frame parser", () => {
     expect(parseReceivedFrame(config, "AA 55").status).toBe("unmatched");
   });
 
-  it("字段切片超出当前帧时返回解析错误", () => {
+  it("按有序固定字段筛选帧并跳过保留字节", () => {
+    const fixed = field("header", 0, 2, "hex", { kind: "fixed", match_hex: "AA 55", visible: false });
+    const skipped = field("reserved", 2, 1, "hex", { kind: "skip", visible: false });
+    const value = field("value", 3, 1, "uint");
+    const config = parserConfig([fixed, skipped, value]);
+
+    expect(parseReceivedFrame(config, "AA 55 FF 2A")).toMatchObject({
+      status: "matched",
+      values: [{ field_id: "value", formatted: "42" }],
+    });
+    expect(parseReceivedFrame(config, "AA 54 FF 2A")).toMatchObject({
+      status: "unmatched",
+      message: "header 固定字节不匹配",
+    });
+    expect(parseReceivedFrame(config, "AA 55")).toMatchObject({
+      status: "unmatched",
+      message: "reserved 超出接收帧长度",
+    });
+  });
+
+  it("按长度字段解析 UTF-8 变长字符串并继续匹配帧尾", () => {
+    const header = field("header", 0, 2, "hex", { kind: "fixed", match_hex: "AA 55", visible: false });
+    const length = field("length", 2, 1, "uint");
+    const payload = field("payload", 3, 1, "text", {
+      length_mode: "field",
+      length_field_id: length.id,
+      text_encoding: "utf-8",
+    });
+    const tail = field("tail", 3, 2, "hex", { kind: "fixed", match_hex: "0D 0A", visible: false });
+    const config = parserConfig([header, length, payload, tail]);
+
+    expect(parseReceivedFrame(config, "AA 55 06 E4 BD A0 E5 A5 BD 0D 0A")).toMatchObject({
+      status: "matched",
+      values: [
+        { field_id: "length", formatted: "6", offset: 2, byte_length: 1 },
+        { field_id: "payload", formatted: "你好", offset: 3, byte_length: 6 },
+      ],
+    });
+    payload.text_encoding = "gbk";
+    expect(parseReceivedFrame(config, "AA 55 04 C4 E3 BA C3 0D 0A")).toMatchObject({
+      status: "matched",
+      values: [
+        { field_id: "length", formatted: "4" },
+        { field_id: "payload", formatted: "你好", byte_length: 4 },
+      ],
+    });
+  });
+
+  it("把帧尾前的剩余字节解析为变长字符串", () => {
+    const payload = field("payload", 1, 1, "text", { length_mode: "remaining", text_encoding: "ascii" });
+    const tail = field("tail", 1, 2, "hex", { kind: "fixed", match_hex: "0D 0A", visible: false });
+    const config = parserConfig([field("head", 0, 1, "hex", { kind: "fixed", match_hex: "AA" }), payload, tail]);
+
+    expect(parseReceivedFrame(config, "AA 54 45 53 54 0D 0A")).toMatchObject({
+      status: "matched",
+      values: [{ field_id: "payload", formatted: "TEST", byte_length: 4 }],
+    });
+  });
+
+  it("按字段顺序自动重排字节范围", () => {
+    const fields = [
+      field("header", 9, 2, "hex", { kind: "fixed", match_hex: "AA 55" }),
+      field("reserved", 9, 3, "hex", { kind: "skip" }),
+      field("value", 9, 2, "uint"),
+    ];
+
+    reflowFrameParserFields(fields);
+
+    expect(fields.map((item) => item.offset)).toEqual([0, 2, 5]);
+  });
+
+  it("字段切片超出当前帧时视为结构不匹配", () => {
     const result = parseReceivedFrame(parserConfig([field("value", 2, 4, "uint")]), "AA 55 01");
 
-    expect(result.status).toBe("error");
-    expect(result.message).toContain("当前帧仅 3 Byte");
+    expect(result.status).toBe("unmatched");
+    expect(result.message).toContain("超出接收帧长度");
   });
 
   it("拒绝把超出安全整数范围的 64 位值静默转换为近似数", () => {
@@ -86,9 +157,14 @@ function field(
   return {
     id,
     name: id,
+    kind: "value",
     offset,
     byte_length: byteLength,
+    length_mode: "fixed",
+    length_field_id: null,
+    match_hex: "",
     data_type: dataType,
+    text_encoding: "utf-8",
     byte_order: "big",
     bit_index: 0,
     scale: 1,

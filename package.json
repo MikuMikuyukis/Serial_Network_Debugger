@@ -1,6 +1,6 @@
 {
   "name": "serial-network-debugger",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "跨平台串口、TCP 和 UDP 调试工具",
   "author": "MikuMikuyukis",
   "private": true,

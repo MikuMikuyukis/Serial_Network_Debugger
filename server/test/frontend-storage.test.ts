@@ -197,6 +197,29 @@ describe("frontend configuration profile storage", () => {
     expect(loadHexFrameConfig("float-profile")).toEqual(config);
   });
 
+  it("保存并恢复 HEX 帧中的变长字符串载荷", () => {
+    const config: HexFrameConfig = {
+      version: 1,
+      id: "text-frame",
+      enabled: true,
+      fields: [{
+        id: "payload",
+        kind: "data",
+        name: "字符串载荷",
+        byte_length: null,
+        source: "fixed",
+        data_type: "text",
+        text_encoding: "gbk",
+        value: "你好",
+        byte_order: "big",
+      }],
+    };
+
+    saveHexFrameConfig(config, "text-profile");
+
+    expect(loadHexFrameConfig("text-profile")).toEqual(config);
+  });
+
   it("迁移旧 CRC16 字段并保存自定义 JS 校验", () => {
     localStorage.setItem(hexFrameStorageKey("legacy-checksum"), JSON.stringify({
       version: 1,
@@ -284,6 +307,45 @@ describe("frontend configuration profile storage", () => {
 
     expect(loadSendEditor("default").data).toBe("");
     expect(loadFrameParserConfig("default").enabled).toBe(false);
+  });
+
+  it("恢复旧版解析字段时补充有序字段属性", () => {
+    localStorage.setItem(frameParserStorageKey("legacy-parser"), JSON.stringify({
+      version: 1,
+      id: "legacy-parser",
+      name: "旧版解析",
+      enabled: true,
+      minimum_length: 2,
+      match_offset: 0,
+      match_hex: "AA 55",
+      fields: [{
+        id: "legacy-value",
+        name: "旧版数值",
+        offset: 2,
+        byte_length: 1,
+        data_type: "uint",
+        byte_order: "big",
+        bit_index: 0,
+        scale: 1,
+        value_offset: 0,
+        decimals: 0,
+        unit: "",
+        visible: true,
+        display: "number",
+        minimum: 0,
+        maximum: 255,
+        color: "#13A88E",
+      }],
+    }));
+
+    expect(loadFrameParserConfig("legacy-parser").fields[0]).toMatchObject({
+      kind: "value",
+      length_mode: "fixed",
+      length_field_id: null,
+      match_hex: "",
+      text_encoding: "utf-8",
+      offset: 2,
+    });
   });
 
   it("导出并完整恢复全部配置组的发送与接收配置", () => {
@@ -444,9 +506,14 @@ function parserConfig(id: string, matchHex: string) {
     fields: [{
       id: `${id}-field`,
       name: "温度",
+      kind: "value" as const,
       offset: 0,
       byte_length: 2,
+      length_mode: "fixed" as const,
+      length_field_id: null,
+      match_hex: "",
       data_type: "uint" as const,
+      text_encoding: "utf-8" as const,
       byte_order: "big" as const,
       bit_index: 0,
       scale: 0.1,

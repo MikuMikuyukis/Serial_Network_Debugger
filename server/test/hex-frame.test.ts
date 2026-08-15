@@ -95,6 +95,47 @@ describe("HEX frame builder", () => {
     expect(buildHexFrame(config, "").data.toString("hex").toUpperCase()).toBe("FEFF3FC00000");
   });
 
+  it("把字符串编码为 HEX 帧载荷并按实际字节数填写长度", () => {
+    const config: HexFrameConfig = {
+      version: 1,
+      id: "text-payload",
+      enabled: true,
+      fields: [
+        { id: "head", kind: "header", name: "帧头", value: "AA" },
+        { id: "length", kind: "length", name: "字符串长度", byte_length: 1, byte_order: "big", range_start_id: "payload", range_end_id: "payload" },
+        { id: "payload", kind: "data", name: "字符串载荷", byte_length: null, source: "fixed", data_type: "text", text_encoding: "utf-8", value: "你好", byte_order: "big" },
+        { id: "tail", kind: "tail", name: "帧尾", value: "0D 0A" },
+      ],
+    };
+
+    expect(buildHexFrame(config, "").data.toString("hex").toUpperCase()).toBe("AA06E4BDA0E5A5BD0D0A");
+    const payload = config.fields[2]!;
+    if (payload.kind !== "data") throw new Error("预期为数据字段");
+    payload.text_encoding = "gbk";
+    expect(buildHexFrame(config, "").data.toString("hex").toUpperCase()).toBe("AA04C4E3BAC30D0A");
+  });
+
+  it("定长字符串按编码后的字节数校验", () => {
+    const config: HexFrameConfig = {
+      version: 1,
+      id: "fixed-text",
+      enabled: true,
+      fields: [{
+        id: "payload",
+        kind: "data",
+        name: "定长字符串",
+        byte_length: 4,
+        source: "fixed",
+        data_type: "text",
+        text_encoding: "utf-8",
+        value: "你好",
+        byte_order: "big",
+      }],
+    };
+
+    expect(() => buildHexFrame(config, "")).toThrow("编码后必须是 4 字节，当前为 6 字节");
+  });
+
   it("长度统计允许包含长度字段自身", () => {
     const config: HexFrameConfig = {
       version: 1,
