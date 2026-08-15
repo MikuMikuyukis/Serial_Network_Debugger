@@ -1,7 +1,7 @@
 # AI Development Guide
 
 更新日期：2026-08-15
-适用版本：`0.3.1` 及当前 `main` 代码
+适用版本：`0.1.x` 及当前 `main` 代码
 
 本文是后续开发者和 AI 理解当前实现的主交接文档。开始修改前还必须阅读根目录 `AGENTS.md`，并以当前源码和测试为最终依据。
 
@@ -53,10 +53,14 @@ Electron 版
 | `server/src/transports/` | Serial、TCP Client、TCP Server、UDP |
 | `server/src/http/app.ts` | REST、WebSocket、静态资源和错误响应 |
 | `server/src/cli.ts` | 浏览器生产服务入口，默认 `127.0.0.1:8765` |
+| `server/src/version.ts` | 从根 `package.json` 读取运行时应用版本 |
 | `server/test/` | 单元测试、本地存储测试和回环集成测试 |
 | `server/public/` | Vite 生产资源，构建生成但纳入 Git |
 | `desktop/src/main.ts` | Electron 多实例生命周期、窗口、子窗口和内嵌服务 |
 | `desktop/src/options.ts` | Electron 实例 ID、Web 监听参数和独立 userData 路径校验 |
+| `scripts/check-version-policy.mjs` | 校验各 workspace 版本同步及补丁号递增规则 |
+| `scripts/bump-patch-version.mjs` | 同步递增根包、workspace 和 lockfile 的补丁版本 |
+| `.github/workflows/portable-release.yml` | 在三个原生 runner 构建并发布便携版 |
 
 ## 4. 通信与实时事件数据流
 
@@ -120,6 +124,8 @@ ConnectionBar
 | WS | `/ws/events` | 状态、系统提示、TX/RX 和统计事件 |
 
 运行时请求由 `server/src/core/schemas.ts` 校验。新增枚举或字段只改 TypeScript 类型是不够的。
+
+`/api/health` 的版本由 `server/src/version.ts` 从根 `package.json` 读取，不允许在 HTTP 路由中硬编码版本。源码运行、编译后的浏览器服务和 Electron 包都依赖同一份根包元数据。
 
 ## 7. HEX 展示与业务值
 
@@ -283,6 +289,32 @@ npm exec electron-builder -- --win nsis --x64
 
 产物位于 `release/`，该目录不提交 Git。未签名安装包可能触发 SmartScreen。
 
+自动发布使用 `.github/workflows/portable-release.yml`：
+
+```text
+main 更新
+  -> 校验 workspace 版本和相对上一 main 的版本变化
+  -> npm test + npm run typecheck
+  -> Windows runner: portable x64 EXE
+  -> Linux runner: x64 AppImage
+  -> macOS runner: Universal DMG
+  -> 生成 SHA256SUMS.txt
+  -> 创建或更新当前提交的 V<version> GitHub Release
+```
+
+工作流只允许从 `main` 发布，并使用最小的 `contents: write` 权限和 GitHub 自动签发的 `GITHUB_TOKEN`。同名标签如果已经指向其他提交必须立即失败；仅允许同一提交重跑时覆盖附件。三个构建 Artifact 在 Actions 中保留 7 天，最终 Release 附件不受该临时保留期影响。
+
+当前发布目标为 Windows x64 单文件 portable EXE、Linux x64 单文件 AppImage 和同时支持 Intel/Apple Silicon 的 macOS Universal DMG。`serialport` 包含平台原生模块，因此三个产物必须由对应平台 runner 分别安装依赖和构建。Windows 和 macOS 产物尚未签名；需要签名时只能从 GitHub Secrets 注入证书和密码，不能写入仓库。
+
+根、frontend、server 和 lockfile 中的版本必须一致。包元数据不带前缀，例如 `0.1.0`；标签与 Release 使用大写 `V`，例如 `V0.1.0`。同一大版本和小版本内，每个准备进入 `main` 的小修改必须让 patch 恰好增加一；major/minor 只有用户明确指定时才能改变。推荐在干净的修改分支开始时执行：
+
+```powershell
+npm run version:patch
+npm run version:check
+```
+
+每个版本只能对应一个 `main` 提交。一次 push 如果跨过多个 patch，工作流会因相对 push 前版本不是 `+1` 而失败，因此应让一次 `main` 更新只包含一个待发布版本，必要时使用 squash merge。
+
 如果环境存在 `ELECTRON_RUN_AS_NODE=1`，仅在当前终端清除后再启动：
 
 ```powershell
@@ -316,13 +348,14 @@ Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 完整交付验证：
 
 ```powershell
+npm run version:check
 npm test
 npm run typecheck
 npm run build
 git diff --check
 ```
 
-截至 2026-08-15 当前基线：12 个测试文件、94 项测试通过，前端/服务端/Electron 类型检查和完整构建通过。后续新增测试后应更新这里和 README 中涉及的数字，或者改为不写固定数量。
+截至 2026-08-15 当前基线：13 个测试文件、99 项测试通过，前端/服务端/Electron 类型检查和完整构建通过。后续新增测试后应更新这里和 README 中涉及的数字，或者改为不写固定数量。
 
 测试使用本机回环 TCP/UDP，不需要物理串口。如果 Electron 或旧开发服务器正在运行，可能造成端口或计时竞争；先停止项目进程再重试。
 
@@ -334,6 +367,7 @@ git diff --check
 - commit 标题和必要正文必须中英文双语。
 - 默认不 push，用户明确要求才 push。
 - 高风险修改走独立分支，测试提交后等待用户确认再合并 `main`。
+- 当前发布线从 `V0.1.0` 开始；同一 major/minor 内每个 `main` 小修改只允许 patch `+1`，major/minor 由用户控制。
 - 不提交密钥、`.env`、日志、`release/`、`server/dist/` 或 `desktop/dist/`。
 - 不要合并仅因为“还存在”的旧功能分支；先确认其是否已经是 `main` 祖先。
 

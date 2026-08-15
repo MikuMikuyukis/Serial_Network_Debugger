@@ -9,6 +9,7 @@ import { encodePayload } from "../core/codec.js";
 import { buildHexFrame, HexFrameSession } from "../core/hex-frame.js";
 import { EventBroker } from "../core/event-broker.js";
 import { PeriodicSender } from "../core/periodic-sender.js";
+import { APPLICATION_VERSION } from "../version.js";
 import {
   periodicSendRequestSchema,
   sendRequestSchema,
@@ -42,7 +43,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.get("/", async (_request, reply) => reply.sendFile("index.html"));
   app.get("/favicon.ico", async (_request, reply) => reply.status(204).send());
 
-  app.get("/api/health", async () => ({ status: "ok", version: "0.3.1" }));
+  app.get("/api/health", async () => ({ status: "ok", version: APPLICATION_VERSION }));
   app.get("/api/status", async () => manager.snapshot());
   app.get("/api/periodic-send", async () => periodicSender.snapshot());
 

@@ -1,5 +1,9 @@
 # Serial Network Debugger
 
+> 本项目由 **OpenAI Codex** 生成。
+
+![Serial Network Debugger 主界面](docs/assets/serial-network-debugger-main.png)
+
 ## 开发状态
 
 > [!WARNING]
@@ -191,6 +195,33 @@ macOS Finder 通常会复用已运行的应用进程。需要启动另一个命�
 ```bash
 open -n -a "Serial Network Debugger" --args --instance device-b --web-port 8872
 ```
+
+### GitHub Actions 自动发布
+
+当前软件版本从 `V0.1.0` 开始。仓库中的 [package.json](package.json) 使用不带 `V` 的 `0.1.0`，Git 标签和 GitHub Release 使用带大写 `V` 的 `V0.1.0`。
+
+每次 `main` 更新后，[便携版发布工作流](.github/workflows/portable-release.yml) 会先校验版本、运行测试和类型检查，再使用三个原生 GitHub runner 分别构建：
+
+| 平台 | Release 产物 | 说明 |
+| --- | --- | --- |
+| Windows x64 | `Serial-Network-Debugger-<version>-windows-x64.exe` | 单文件 portable EXE，无需安装 |
+| Linux x64 | `Serial-Network-Debugger-<version>-linux-x86_64.AppImage` | 单文件 AppImage；首次运行前可能需要添加执行权限 |
+| macOS Universal | `Serial-Network-Debugger-<version>-macos-universal.dmg` | 同时包含 Intel 和 Apple Silicon 应用的单文件分发镜像 |
+
+三个平台全部成功后，工作流会创建对应版本的 GitHub Release，并上传上述文件和 `SHA256SUMS.txt`。Actions 页面中的临时 Artifact 保留 7 天，Release 附件不会受这个期限影响。也可以在 GitHub 的 `Actions` 页面手动重跑该工作流，但正式发布仍只允许来自 `main`。
+
+仓库需要允许工作流获得 `contents: write` 权限。如果组织策略禁用了写权限，请在 GitHub 仓库的 `Settings > Actions > General > Workflow permissions` 中允许 GitHub Actions 创建 Release。工作流使用 GitHub 自动提供的 `GITHUB_TOKEN`，不需要在仓库中保存个人令牌。
+
+同一大版本和小版本内，每次准备进入 `main` 的小修改必须把补丁号恰好增加一。应在干净的修改分支开始工作时运行：
+
+```powershell
+npm run version:patch
+npm run version:check
+```
+
+例如 `V0.1.0` 的下一次小修改是 `V0.1.1`，再下一次是 `V0.1.2`。大版本和小版本只能由项目所有者明确指定，AI 或其他开发者不得自行调整。每个版本只能指向一个 `main` 提交；如果同名标签已经属于其他提交，工作流会拒绝覆盖。每次向 `main` 推送应只包含一个待发布版本，功能分支合并时建议整理为单个发布提交。
+
+当前没有 Windows 代码签名或 macOS 签名与公证。Windows SmartScreen 可能提示未知发布者，macOS Gatekeeper 也可能阻止直接运行；正式公开分发前应配置对应平台的签名凭据，并只通过 GitHub Secrets 提供给 Actions。
 
 默认只监听 `127.0.0.1`，局域网内其他电脑无法访问。确需开放访问时：
 

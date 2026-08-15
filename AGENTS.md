@@ -81,6 +81,7 @@ More detail is in `docs/AI-development-guide.md`.
 Before committing a completed change, run from the repository root:
 
 ```powershell
+npm run version:check
 npm test
 npm run typecheck
 npm run build
@@ -109,7 +110,20 @@ type: 中文摘要 / English summary
 English: Describe the behavior, reason, and verification.
 ```
 
-## 9. Branches, Merge, and Push / 分支、合并与推送
+## 9. Versioning and Releases / 版本与发布
+
+- The current public version line starts at `V0.1.0`.
+- 当前公开版本从 `V0.1.0` 开始。
+- Package metadata uses SemVer without a prefix (`0.1.0`); Git tags and GitHub Releases use an uppercase `V` prefix (`V0.1.0`).
+- 同一大版本和小版本内，每个准备进入 `main` 的完整小修改都必须让补丁号相对上一版本恰好增加一，例如 `V0.1.0` -> `V0.1.1` -> `V0.1.2`。
+- Major and minor numbers may change only when the user explicitly specifies them. Agents must not infer or choose those numbers.
+- 大版本号和小版本号只能由用户明确指定，AI 不得自行推断或调整。
+- Start a small change from a clean branch with `npm run version:patch`; run `npm run version:check` before committing.
+- Keep the versions in root `package.json`, `frontend/package.json`, `server/package.json`, and `package-lock.json` synchronized.
+- Each release version must identify exactly one `main` commit. The release workflow uses tag `V<version>` and must reject an existing tag that belongs to another commit.
+- A push to `main` should contain one release version. Prefer a single release commit or a squash merge so the workflow can validate the transition from the previous `main` version.
+
+## 10. Branches, Merge, and Push / 分支、合并与推送
 
 - Do not push commits or branches unless the user explicitly requests it.
 - 除非用户明确要求，否则不要向 GitHub 推送。
@@ -119,7 +133,7 @@ English: Describe the behavior, reason, and verification.
 - Do not merge old local feature branches merely because they exist. Several retained branches may already be ancestors of `main` and are historical references.
 - Never force-push, reset hard, or delete branches/tags without explicit authorization.
 
-## 10. Useful Commands / 常用命令
+## 11. Useful Commands / 常用命令
 
 ```powershell
 npm install
@@ -127,6 +141,8 @@ npm run dev:server
 npm run dev:frontend
 npm run desktop
 npm run desktop:pack
+npm run version:patch
+npm run version:check
 npm exec electron-builder -- --win nsis --x64
 ```
 

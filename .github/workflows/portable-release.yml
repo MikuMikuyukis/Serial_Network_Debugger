@@ -1,0 +1,166 @@
+name: Build portable release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: portable-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.12.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate release version
+        id: version
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Portable releases may only be created from main." >&2
+            exit 1
+          fi
+          previous_ref=""
+          previous_version=""
+          if [[ "${GITHUB_EVENT_NAME}" == "push" \
+            && -n "${BEFORE_SHA}" \
+            && "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+            previous_ref="${BEFORE_SHA}"
+          elif git rev-parse --verify "${GITHUB_SHA}^" >/dev/null 2>&1; then
+            previous_ref="${GITHUB_SHA}^"
+          fi
+          if [[ -n "${previous_ref}" ]]; then
+            previous_version="$(git show "${previous_ref}:package.json" | node -e \
+              'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(input).version));')"
+          fi
+          node scripts/check-version-policy.mjs "${previous_version}"
+          version="$(node -p "require('./package.json').version")"
+          tag="V${version}"
+          git fetch --force --tags origin
+          if git show-ref --verify --quiet "refs/tags/${tag}"; then
+            tag_commit="$(git rev-list -n 1 "${tag}")"
+            if [[ "${tag_commit}" != "${GITHUB_SHA}" ]]; then
+              echo "Release tag ${tag} already belongs to ${tag_commit}." >&2
+              exit 1
+            fi
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run type checks
+        run: npm run typecheck
+
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: windows-x64
+            command: npm run release:win
+            path: release/*.exe
+          - os: ubuntu-latest
+            artifact: linux-x64
+            command: npm run release:linux
+            path: release/*.AppImage
+          - os: macos-latest
+            artifact: macos-universal
+            command: npm run release:mac
+            path: release/*.dmg
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.12.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build portable package
+        run: ${{ matrix.command }}
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Serial-Network-Debugger-${{ needs.verify.outputs.version }}-${{ matrix.artifact }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Serial-Network-Debugger-${{ needs.verify.outputs.version }}-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          git fetch --force --tags origin
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            tag_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+            if [[ "${tag_commit}" != "${GITHUB_SHA}" ]]; then
+              echo "Refusing to overwrite ${RELEASE_TAG} from another commit." >&2
+              exit 1
+            fi
+            gh release upload "${RELEASE_TAG}" release-assets/* --clobber
+          else
+            gh release create "${RELEASE_TAG}" release-assets/* \
+              --target "${GITHUB_SHA}" \
+              --title "Serial Network Debugger V${RELEASE_VERSION}" \
+              --generate-notes
+          fi
