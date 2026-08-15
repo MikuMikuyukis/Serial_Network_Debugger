@@ -304,6 +304,8 @@ main 更新
 
 工作流只允许从 `main` 发布，并使用最小的 `contents: write` 权限和 GitHub 自动签发的 `GITHUB_TOKEN`。同名标签如果已经指向其他提交必须立即失败；仅允许同一提交重跑时覆盖附件。三个构建 Artifact 在 Actions 中保留 7 天，最终 Release 附件不受该临时保留期影响。
 
+三个 `release:*` 构建脚本必须显式传入 `--publish never`。electron-builder 26 会在 CI 环境中隐式尝试发布，若不禁用，会在已经生成 AppImage 或 DMG 后因构建作业没有个人 `GH_TOKEN` 而失败。构建作业的职责只限于生成并上传临时 Artifact；只有最终 `release` 作业可以使用 `${{ github.token }}` 创建或更新 GitHub Release。不要为了规避该错误向构建矩阵注入个人令牌。
+
 GitHub Actions 使用原生 Node 24 运行时的官方 Action 版本。更新工作流依赖时需要检查 Action 自身的 `runs.using`，不能只看 `setup-node` 配置的应用 Node 版本；二者是不同的运行时。
 
 当前 `package-lock.json` 在 Windows 生成，npm 的 optional dependency 问题可能导致 `npm ci` 在其他平台漏装 Rollup 原生包。构建矩阵通过 `rollup_package` 为 Linux x64 和 macOS arm64 显式安装与 `frontend/node_modules/rollup` 完全相同版本的二进制包。该步骤必须位于 `npm ci` 之后和 Vite 构建之前，不能把平台二进制版本独立写死。
