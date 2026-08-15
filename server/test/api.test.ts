@@ -229,6 +229,55 @@ describe("HTTP and WebSocket API", () => {
     client.destroy();
   });
 
+  it("只允许回环地址执行自定义 JS 校验", async () => {
+    const app = await makeApp();
+    const frameConfig: HexFrameConfig = {
+      version: 1,
+      id: "local-custom-checksum",
+      enabled: true,
+      fields: [
+        { id: "data", kind: "header", name: "输入", value: "01 02" },
+        {
+          id: "js",
+          kind: "checksum",
+          name: "JS",
+          method: "custom_js",
+          byte_length: 1,
+          parameters: {
+            preset: "modbus",
+            width: 16,
+            polynomial: "8005",
+            initial: "FFFF",
+            xor_out: "0000",
+            reflect_input: true,
+            reflect_output: true,
+          },
+          script: "return bytes.reduce((sum, byte) => sum + byte, 0);",
+          byte_order: "big",
+          range_start_id: "data",
+          range_end_id: "data",
+        },
+      ],
+    };
+
+    const local = await app.inject({
+      method: "POST",
+      url: "/api/frame/preview",
+      payload: { data: "", frame_config: frameConfig },
+    });
+    expect(local.statusCode, local.body).toBe(200);
+    expect(local.json()).toMatchObject({ hex: "01 02 03" });
+
+    const remote = await app.inject({
+      method: "POST",
+      url: "/api/frame/preview",
+      remoteAddress: "192.168.10.20",
+      payload: { data: "", frame_config: frameConfig },
+    });
+    expect(remote.statusCode).toBe(403);
+    expect(remote.json().detail).toContain("本机回环地址");
+  });
+
   it("周期 HEX 发送每次递增序号并公开最新序号", async () => {
     const app = await makeApp();
     const connected = await app.inject({

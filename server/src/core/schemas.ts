@@ -10,6 +10,7 @@ const byteOrder = z.enum(["big", "little"]);
 const frameByteLength = z.union([
   z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(8),
 ]);
+const crcWidth = z.union([z.literal(8), z.literal(16), z.literal(32)]);
 const frameRange = {
   range_start_id: frameFieldId.nullable().default(null),
   range_end_id: frameFieldId.nullable().default(null),
@@ -64,11 +65,12 @@ const dataFrameFieldSchema = z.object({
   generator: frameGeneratorSchema.optional(),
 });
 
-const crc16ParametersSchema = z.object({
-  preset: z.enum(["modbus", "arc", "ccitt_false", "xmodem", "x25", "kermit", "custom"]),
-  polynomial: z.string().min(1).max(6),
-  initial: z.string().min(1).max(6),
-  xor_out: z.string().min(1).max(6),
+const crcParametersSchema = z.object({
+  preset: z.enum(["crc8", "crc8_maxim", "modbus", "arc", "ccitt_false", "xmodem", "x25", "kermit", "crc32", "crc32_mpeg2", "custom"]),
+  width: crcWidth.default(16),
+  polynomial: z.string().min(1).max(10),
+  initial: z.string().min(1).max(10),
+  xor_out: z.string().min(1).max(10),
   reflect_input: z.boolean(),
   reflect_output: z.boolean(),
 });
@@ -77,9 +79,20 @@ const checksumFrameFieldSchema = z.object({
   id: frameFieldId,
   name: frameFieldName,
   kind: z.literal("checksum"),
-  parameters: crc16ParametersSchema,
+  method: z.enum(["crc", "sum", "xor", "custom_js"]).default("crc"),
+  byte_length: frameByteLength.default(2),
+  parameters: crcParametersSchema,
+  script: z.string().max(16_384).default(""),
   byte_order: byteOrder,
   ...frameRange,
+}).superRefine((field, context) => {
+  if (field.method === "crc" && field.byte_length !== field.parameters.width / 8) {
+    context.addIssue({
+      code: "custom",
+      path: ["byte_length"],
+      message: "CRC 输出长度必须与 CRC 位宽一致",
+    });
+  }
 });
 
 export const hexFrameConfigSchema = z.object({

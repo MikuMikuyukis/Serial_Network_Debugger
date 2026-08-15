@@ -32,6 +32,7 @@ Electron 版
 - Vue 3 + Vite
 - Fastify + `@fastify/websocket`
 - Electron + electron-builder
+- QuickJS WebAssembly 0.32（自定义校验脚本隔离）
 - `serialport` 13（包含平台原生模块）
 - Zod 4 运行时请求校验
 - Vitest 4
@@ -50,6 +51,7 @@ Electron 版
 | `frontend/src/hex-display.ts` | HEX 展示空格、光标和删除行为 |
 | `frontend/src/frame-parser.ts` | RX 帧字段校验和浏览器端解析 |
 | `server/src/core/` | 编解码、类型、Zod schema、组帧、周期发送和管理器 |
+| `server/src/core/custom-checksum-sandbox.ts` | QuickJS WASM 自定义校验脚本隔离与资源限制 |
 | `server/src/transports/` | Serial、TCP Client、TCP Server、UDP |
 | `server/src/http/app.ts` | REST、WebSocket、静态资源和错误响应 |
 | `server/src/cli.ts` | 浏览器生产服务入口，默认 `127.0.0.1:8765` |
@@ -146,9 +148,15 @@ ConnectionBar
 - `sequence`：1/2/3/4/8 Byte 序号
 - `length`：按字段 ID 范围计算长度
 - `data`：fixed/editor/generated 数据
-- `checksum`：CRC16 和字段 ID 范围
+- `checksum`：CRC、SUM、XOR、自定义 JS 和字段 ID 范围
 
-核心实现在 `server/src/core/hex-frame.ts`。处理顺序是固定字段/数据编码、长度占位与计算、CRC 占位与计算、最终拼接。完整帧最大 4 MiB。
+核心实现在 `server/src/core/hex-frame.ts`。处理顺序是固定字段/数据编码、长度占位与计算、校验占位与计算、最终拼接。完整帧最大 4 MiB。一个配置可放置多个校验字段，但前面的校验不能引用自身或尚未计算的后续校验字段。
+
+`checksum` 字段的 `method` 为 `crc`、`sum`、`xor` 或 `custom_js`，`byte_length` 控制输出宽度。CRC 支持 8/16/32 位内置参数和自定义参数，CRC 输出长度必须等于位宽。旧配置缺少 `method`、`byte_length`、`parameters.width` 和 `script` 时，Schema 与 `storage.ts` 会分别补为 `crc`、2、16 和空字符串。
+
+自定义 JS 由 `custom-checksum-sandbox.ts` 在 QuickJS WebAssembly 虚拟机中同步执行。每次计算创建全新的 runtime/context，只注入当前校验范围内冻结的 `bytes` 数组，不注入任何宿主函数或宿主对象；`process`、`require`、`fetch`、WebAssembly、SharedArrayBuffer 和 Atomics 均不可用。即使脚本使用 `Function` 或其他 QuickJS 内部动态代码能力，也只能留在独立 WASM 虚拟机内，无法切换到 Node.js 上下文。
+
+每次执行限制为 100 ms、16 MiB runtime 内存、512 KiB 栈和 64 KiB 输入；超时、内存耗尽、递归溢出和超限输入必须作为组帧错误返回，不能拖垮服务进程。脚本返回值只能是非负安全整数、`BigInt` 或定长 HEX 字符串。`/api/send`、`/api/frame/preview` 和 `/api/periodic-send/start` 还必须在执行前检查来源地址，包含自定义脚本时只允许 IPv4/IPv6 回环地址，以防无认证的局域网请求反复消耗脚本执行资源。QuickJS 是安全边界，回环限制和资源限制是额外的纵深防御，不能退回 Node.js `vm`。
 
 必须保持：
 
@@ -156,8 +164,9 @@ ConnectionBar
 - 发送失败不递增序号。
 - transport 成功写入后才提交下一序号。
 - 范围使用字段 ID；字段移动不能改变引用对象。
-- 删除字段时清理长度/CRC 对该 ID 的引用。
-- CRC 不能依赖自身或尚未计算的后续 CRC。
+- 删除字段时清理长度/校验对该 ID 的引用。
+- 校验字段不能依赖自身或尚未计算的后续校验字段。
+- 自定义 JS 不能接触 Node.js 或宿主对象，且每次执行不得复用上一次脚本上下文。
 - 完整帧预览不能写回 `preset.data` 或主发送框原始数据，否则会重复套帧。
 
 ## 9. 自定义生成控件
@@ -361,7 +370,7 @@ npm run build
 git diff --check
 ```
 
-截至 2026-08-15 当前基线：13 个测试文件、99 项测试通过，前端/服务端/Electron 类型检查和完整构建通过。后续新增测试后应更新这里和 README 中涉及的数字，或者改为不写固定数量。
+截至 2026-08-15 当前基线：14 个测试文件、113 项测试通过，前端/服务端/Electron 类型检查和完整构建通过。后续新增测试后应更新这里和 README 中涉及的数字，或者改为不写固定数量。
 
 测试使用本机回环 TCP/UDP，不需要物理串口。如果 Electron 或旧开发服务器正在运行，可能造成端口或计时竞争；先停止项目进程再重试。
 

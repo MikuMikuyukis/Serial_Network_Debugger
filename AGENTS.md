@@ -59,7 +59,8 @@ Only updating the frontend causes Zod API rejection. Only updating the backend c
 - HEX display spaces are presentation only. Stored and transmitted values remain compact business data.
 - Frame preview and preset full-frame display must never overwrite raw editor/preset data.
 - Frame sequence values advance only after a successful transport write. Preview and failed sends do not advance them.
-- Length and CRC ranges reference field IDs, not array indexes; deleting a field must clear references to it.
+- Length and checksum ranges reference field IDs, not array indexes; deleting a field must clear references to it.
+- Custom checksum JavaScript runs only in a fresh resource-limited QuickJS WASM runtime and only for loopback requests. Never replace it with Node.js `vm`, expose host objects/functions, reuse script contexts, or remove the time, memory, stack, and input limits.
 - Generated-control `update` changes the value/preview; `commit` may trigger auto-send. Range-slider dragging must not send continuously.
 - Float32 and Float64 are fixed at 4 and 8 bytes and use IEEE 754 with the selected byte order.
 - Browser storage is untrusted input. Preserve validation, limits, defaults, legacy default-profile fallback, and per-profile isolation.

@@ -789,26 +789,39 @@ function normalizeHexFrameField(value: unknown): HexFrameField | null {
     if (!parameters || typeof parameters !== "object") return null;
     const crc = parameters as Record<string, unknown>;
     const preset = crc.preset;
+    const method = field.method === undefined ? "crc" : field.method;
+    const byteLength = field.byte_length === undefined ? 2 : field.byte_length;
+    const script = field.script === undefined ? "" : field.script;
+    const width = crc.width === undefined ? 16 : crc.width;
     return isCrcPreset(preset)
-      && isBoundedString(crc.polynomial, 1, 6)
-      && isBoundedString(crc.initial, 1, 6)
-      && isBoundedString(crc.xor_out, 1, 6)
+      && isCrcWidth(width)
+      && isBoundedString(crc.polynomial, 1, 10)
+      && isBoundedString(crc.initial, 1, 10)
+      && isBoundedString(crc.xor_out, 1, 10)
       && typeof crc.reflect_input === "boolean"
       && typeof crc.reflect_output === "boolean"
+      && isChecksumMethod(method)
+      && isFrameByteLength(byteLength)
+      && (method !== "crc" || byteLength === width / 8)
+      && isBoundedString(script, 0, 16_384)
       && isByteOrder(field.byte_order)
       && isFrameRangeId(field.range_start_id)
       && isFrameRangeId(field.range_end_id)
       ? {
           ...base,
           kind: field.kind,
+          method,
+          byte_length: byteLength,
           parameters: {
             preset,
+            width,
             polynomial: crc.polynomial,
             initial: crc.initial,
             xor_out: crc.xor_out,
             reflect_input: crc.reflect_input,
             reflect_output: crc.reflect_output,
           },
+          script,
           byte_order: field.byte_order,
           range_start_id: field.range_start_id,
           range_end_id: field.range_end_id,
@@ -880,8 +893,19 @@ function isGeneratorControl(value: unknown): value is import("./types").FrameGen
     || value === "enum" || value === "bcd_slider";
 }
 
-function isCrcPreset(value: unknown): value is "modbus" | "arc" | "ccitt_false" | "xmodem" | "x25" | "kermit" | "custom" {
-  return value === "modbus" || value === "arc" || value === "ccitt_false" || value === "xmodem" || value === "x25" || value === "kermit" || value === "custom";
+function isChecksumMethod(value: unknown): value is import("./types").ChecksumMethod {
+  return value === "crc" || value === "sum" || value === "xor" || value === "custom_js";
+}
+
+function isCrcWidth(value: unknown): value is import("./types").CrcWidth {
+  return value === 8 || value === 16 || value === 32;
+}
+
+function isCrcPreset(value: unknown): value is import("./types").CrcParameters["preset"] {
+  return value === "crc8" || value === "crc8_maxim"
+    || value === "modbus" || value === "arc" || value === "ccitt_false"
+    || value === "xmodem" || value === "x25" || value === "kermit"
+    || value === "crc32" || value === "crc32_mpeg2" || value === "custom";
 }
 
 function isFrameRangeId(value: unknown): value is string | null {

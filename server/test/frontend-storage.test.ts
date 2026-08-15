@@ -197,6 +197,46 @@ describe("frontend configuration profile storage", () => {
     expect(loadHexFrameConfig("float-profile")).toEqual(config);
   });
 
+  it("迁移旧 CRC16 字段并保存自定义 JS 校验", () => {
+    localStorage.setItem(hexFrameStorageKey("legacy-checksum"), JSON.stringify({
+      version: 1,
+      id: "legacy-frame",
+      enabled: true,
+      fields: [{
+        id: "crc",
+        kind: "checksum",
+        name: "CRC16-MODBUS",
+        parameters: {
+          preset: "modbus",
+          polynomial: "8005",
+          initial: "FFFF",
+          xor_out: "0000",
+          reflect_input: true,
+          reflect_output: true,
+        },
+        byte_order: "little",
+        range_start_id: null,
+        range_end_id: null,
+      }],
+    }));
+
+    expect(loadHexFrameConfig("legacy-checksum").fields[0]).toMatchObject({
+      method: "crc",
+      byte_length: 2,
+      script: "",
+      parameters: { width: 16 },
+    });
+
+    const custom = loadHexFrameConfig("legacy-checksum");
+    const field = custom.fields[0]!;
+    if (field.kind !== "checksum") throw new Error("预期为校验字段");
+    field.method = "custom_js";
+    field.byte_length = 4;
+    field.script = "return bytes.reduce((sum, byte) => sum + byte, 0);";
+    saveHexFrameConfig(custom, "custom-checksum");
+    expect(loadHexFrameConfig("custom-checksum")).toEqual(custom);
+  });
+
   it("复制配置时为预设和 HEX 帧生成独立标识", () => {
     const frame = frameConfig("source-frame");
     saveHexFrameConfig(frame, "source");

@@ -4,7 +4,9 @@ import { ChevronDown, ChevronUp, Copy, FileInput, Trash2, X } from "@lucide/vue"
 import { apiRequest } from "../api";
 import type {
   ByteOrder,
-  Crc16Parameters,
+  ChecksumMethod,
+  CrcParameters,
+  CrcWidth,
   HexFrameConfig,
   HexFrameDataField,
   HexFrameField,
@@ -49,19 +51,32 @@ const addOptions: Array<{ label: string; create: () => HexFrameField }> = [
   { label: "帧长度", create: () => ({ id: fieldId(), kind: "length", name: "帧长度", byte_length: 2, byte_order: "big", range_start_id: null, range_end_id: null }) },
   { label: "定长数据", create: (): HexFrameDataField => ({ id: fieldId(), kind: "data", name: "定长数据", byte_length: 1, source: "fixed", data_type: "hex", value: "00", byte_order: "big" }) },
   { label: "任意字节", create: () => ({ id: fieldId(), kind: "data", name: "任意字节", byte_length: null, source: "editor", data_type: "hex", value: "", byte_order: "big" }) },
-  { label: "CRC16", create: () => ({ id: fieldId(), kind: "checksum", name: "CRC16-MODBUS", parameters: crcPreset("modbus"), byte_order: "little", range_start_id: null, range_end_id: null }) },
+  { label: "校验", create: createChecksumField },
   { label: "帧尾", create: () => staticField("tail", "帧尾", "0D 0A") },
 ];
 
-const crcPresets: Array<{ value: Crc16Parameters["preset"]; label: string }> = [
+const checksumMethods: Array<{ value: ChecksumMethod; label: string }> = [
+  { value: "crc", label: "CRC" },
+  { value: "sum", label: "累加和 SUM" },
+  { value: "xor", label: "异或 XOR" },
+  { value: "custom_js", label: "自定义 JavaScript" },
+];
+
+const crcPresets: Array<{ value: CrcParameters["preset"]; label: string }> = [
+  { value: "crc8", label: "CRC-8" },
+  { value: "crc8_maxim", label: "CRC-8/MAXIM-DOW" },
   { value: "modbus", label: "CRC16-MODBUS" },
   { value: "arc", label: "CRC16-ARC" },
   { value: "ccitt_false", label: "CRC16-CCITT-FALSE" },
   { value: "xmodem", label: "CRC16-XMODEM" },
   { value: "x25", label: "CRC16-X25" },
   { value: "kermit", label: "CRC16-KERMIT" },
+  { value: "crc32", label: "CRC-32/ISO-HDLC" },
+  { value: "crc32_mpeg2", label: "CRC-32/MPEG-2" },
   { value: "custom", label: "自定义" },
 ];
+
+const CUSTOM_CHECKSUM_EXAMPLE = "let sum = 0;\nfor (const byte of bytes) sum = (sum + byte) & 0xFF;\nreturn sum;";
 
 const generatorControls: Array<{ value: FrameGeneratorControl; label: string }> = [
   { value: "none", label: "无" },
@@ -189,18 +204,48 @@ async function refreshPreview(): Promise<void> {
 function applyCrcPreset(field: Extract<HexFrameField, { kind: "checksum" }>): void {
   const preset = field.parameters.preset;
   if (preset !== "custom") field.parameters = crcPreset(preset);
+  field.byte_length = (field.parameters.width / 8) as FrameByteLength;
 }
 
-function crcPreset(preset: Exclude<Crc16Parameters["preset"], "custom">): Crc16Parameters {
+function updateCrcWidth(field: Extract<HexFrameField, { kind: "checksum" }>): void {
+  field.byte_length = (field.parameters.width / 8) as FrameByteLength;
+}
+
+function updateChecksumMethod(field: Extract<HexFrameField, { kind: "checksum" }>): void {
+  if (field.method === "crc") {
+    field.byte_length = (field.parameters.width / 8) as FrameByteLength;
+    field.name = crcPresetLabel(field.parameters.preset);
+    return;
+  }
+  if (field.method === "sum") field.name = `SUM${field.byte_length * 8}`;
+  if (field.method === "xor") {
+    field.byte_length = 1;
+    field.name = "XOR8";
+  }
+  if (field.method === "custom_js") {
+    field.name = "自定义 JS 校验";
+    field.script ||= CUSTOM_CHECKSUM_EXAMPLE;
+  }
+}
+
+function crcPreset(preset: Exclude<CrcParameters["preset"], "custom">): CrcParameters {
   const values = {
-    modbus: ["8005", "FFFF", "0000", true, true],
-    arc: ["8005", "0000", "0000", true, true],
-    ccitt_false: ["1021", "FFFF", "0000", false, false],
-    xmodem: ["1021", "0000", "0000", false, false],
-    x25: ["1021", "FFFF", "FFFF", true, true],
-    kermit: ["1021", "0000", "0000", true, true],
-  }[preset] as [string, string, string, boolean, boolean];
-  return { preset, polynomial: values[0], initial: values[1], xor_out: values[2], reflect_input: values[3], reflect_output: values[4] };
+    crc8: [8, "07", "00", "00", false, false],
+    crc8_maxim: [8, "31", "00", "00", true, true],
+    modbus: [16, "8005", "FFFF", "0000", true, true],
+    arc: [16, "8005", "0000", "0000", true, true],
+    ccitt_false: [16, "1021", "FFFF", "0000", false, false],
+    xmodem: [16, "1021", "0000", "0000", false, false],
+    x25: [16, "1021", "FFFF", "FFFF", true, true],
+    kermit: [16, "1021", "0000", "0000", true, true],
+    crc32: [32, "04C11DB7", "FFFFFFFF", "FFFFFFFF", true, true],
+    crc32_mpeg2: [32, "04C11DB7", "FFFFFFFF", "00000000", false, false],
+  }[preset] as [CrcWidth, string, string, string, boolean, boolean];
+  return { preset, width: values[0], polynomial: values[1], initial: values[2], xor_out: values[3], reflect_input: values[4], reflect_output: values[5] };
+}
+
+function crcPresetLabel(preset: CrcParameters["preset"]): string {
+  return crcPresets.find((item) => item.value === preset)?.label ?? "CRC";
 }
 
 function updateDataType(field: HexFrameDataField): void {
@@ -293,6 +338,21 @@ function staticField(kind: "header" | "frame_id" | "tail", name: string, value: 
   return { id: fieldId(), kind, name, value };
 }
 
+function createChecksumField(): HexFrameField {
+  return {
+    id: fieldId(),
+    kind: "checksum",
+    name: "CRC16-MODBUS",
+    method: "crc",
+    byte_length: 2,
+    parameters: crcPreset("modbus"),
+    script: CUSTOM_CHECKSUM_EXAMPLE,
+    byte_order: "little",
+    range_start_id: null,
+    range_end_id: null,
+  };
+}
+
 function fieldId(): string {
   return typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
@@ -321,7 +381,10 @@ function createVariableModbusExample(): HexFrameField[] {
     id: fieldId(),
     kind: "checksum",
     name: "CRC16-MODBUS",
+    method: "crc",
+    byte_length: 2,
     parameters: crcPreset("modbus"),
+    script: CUSTOM_CHECKSUM_EXAMPLE,
     byte_order: "little",
     range_start_id: header.id,
     range_end_id: data.id,
@@ -338,7 +401,10 @@ function createFixedCommandExample(): HexFrameField[] {
     id: fieldId(),
     kind: "checksum",
     name: "CRC16-MODBUS",
+    method: "crc",
+    byte_length: 2,
     parameters: crcPreset("modbus"),
+    script: CUSTOM_CHECKSUM_EXAMPLE,
     byte_order: "little",
     range_start_id: header.id,
     range_end_id: argument.id,
@@ -350,7 +416,7 @@ function fieldLabel(field: HexFrameField): string {
   const labels: Record<HexFrameField["kind"], string> = {
     header: "帧头", sequence: "帧序号", frame_id: "帧 ID", length: "帧长度",
     data: field.kind === "data" && field.byte_length ? `${field.byte_length} Byte` : "任意字节",
-    checksum: "CRC16", tail: "帧尾",
+    checksum: "校验", tail: "帧尾",
   };
   return labels[field.kind];
 }
@@ -359,7 +425,16 @@ function fieldSummary(field: HexFrameField): string {
   if (field.kind === "header" || field.kind === "frame_id" || field.kind === "tail") return field.value || "空";
   if (field.kind === "sequence") return `${field.value} / +${field.step}`;
   if (field.kind === "length") return `${field.byte_length} Byte ${orderLabel(field.byte_order)}`;
-  if (field.kind === "checksum") return `${field.parameters.preset.toUpperCase()} ${orderLabel(field.byte_order)}`;
+  if (field.kind === "checksum") {
+    const method = field.method === "crc"
+      ? crcPresetLabel(field.parameters.preset)
+      : field.method === "sum"
+        ? `SUM${field.byte_length * 8}`
+        : field.method === "xor"
+          ? `XOR${field.byte_length * 8}`
+          : `JS ${field.byte_length} Byte`;
+    return `${method} ${orderLabel(field.byte_order)}`;
+  }
   if (field.kind === "data") {
     if (field.source === "editor") return "发送框数据";
     if (field.source === "generated") return `${field.generator?.control_name || "自定义生成"}: ${field.value || "0"}`;
@@ -484,15 +559,22 @@ function clearRangeReferences(id: string): void {
                   </template>
 
                   <template v-else-if="selectedField.kind === 'checksum'">
-                    <label class="field span-2"><span>CRC16 类型</span><select v-model="selectedField.parameters.preset" @change="applyCrcPreset(selectedField)"><option v-for="preset in crcPresets" :key="preset.value" :value="preset.value">{{ preset.label }}</option></select></label>
+                    <label class="field span-2"><span>校验方式</span><select v-model="selectedField.method" @change="updateChecksumMethod(selectedField)"><option v-for="method in checksumMethods" :key="method.value" :value="method.value">{{ method.label }}</option></select></label>
                     <label class="field"><span>校验起始字段</span><select v-model="selectedField.range_start_id"><option :value="null">第一个字段</option><option v-for="option in fieldOptions" :key="option.id" :value="option.id">{{ option.label }}</option></select></label>
                     <label class="field"><span>校验结束字段</span><select v-model="selectedField.range_end_id"><option :value="null">校验字段前一项</option><option v-for="option in fieldOptions" :key="option.id" :value="option.id">{{ option.label }}</option></select></label>
-                    <label class="field"><span>多项式 POLY</span><input v-model="selectedField.parameters.polynomial" class="mono-input" :disabled="selectedField.parameters.preset !== 'custom'" /></label>
-                    <label class="field"><span>初始值 INIT</span><input v-model="selectedField.parameters.initial" class="mono-input" :disabled="selectedField.parameters.preset !== 'custom'" /></label>
-                    <label class="field"><span>结果异或 XOROUT</span><input v-model="selectedField.parameters.xor_out" class="mono-input" :disabled="selectedField.parameters.preset !== 'custom'" /></label>
+                    <template v-if="selectedField.method === 'crc'">
+                      <label class="field span-2"><span>CRC 类型</span><select v-model="selectedField.parameters.preset" @change="applyCrcPreset(selectedField)"><option v-for="preset in crcPresets" :key="preset.value" :value="preset.value">{{ preset.label }}</option></select></label>
+                      <label v-if="selectedField.parameters.preset === 'custom'" class="field"><span>CRC 位宽</span><select v-model="selectedField.parameters.width" @change="updateCrcWidth(selectedField)"><option :value="8">8 Bit</option><option :value="16">16 Bit</option><option :value="32">32 Bit</option></select></label>
+                      <label class="field"><span>输出长度</span><input :value="`${selectedField.byte_length} Byte`" disabled /></label>
+                      <label class="field"><span>多项式 POLY</span><input v-model="selectedField.parameters.polynomial" class="mono-input" :disabled="selectedField.parameters.preset !== 'custom'" /></label>
+                      <label class="field"><span>初始值 INIT</span><input v-model="selectedField.parameters.initial" class="mono-input" :disabled="selectedField.parameters.preset !== 'custom'" /></label>
+                      <label class="field"><span>结果异或 XOROUT</span><input v-model="selectedField.parameters.xor_out" class="mono-input" :disabled="selectedField.parameters.preset !== 'custom'" /></label>
+                      <label class="settings-toggle"><input v-model="selectedField.parameters.reflect_input" type="checkbox" :disabled="selectedField.parameters.preset !== 'custom'" /><span>输入反转 REFIN</span></label>
+                      <label class="settings-toggle"><input v-model="selectedField.parameters.reflect_output" type="checkbox" :disabled="selectedField.parameters.preset !== 'custom'" /><span>输出反转 REFOUT</span></label>
+                    </template>
+                    <label v-else class="field"><span>输出长度</span><select v-model="selectedField.byte_length"><option v-for="length in ([1, 2, 3, 4, 8] as FrameByteLength[])" :key="length" :value="length">{{ length }} Byte</option></select></label>
                     <label class="field"><span>字节顺序</span><select v-model="selectedField.byte_order"><option value="big">高字节在前</option><option value="little">低字节在前</option></select></label>
-                    <label class="settings-toggle"><input v-model="selectedField.parameters.reflect_input" type="checkbox" :disabled="selectedField.parameters.preset !== 'custom'" /><span>输入反转 REFIN</span></label>
-                    <label class="settings-toggle"><input v-model="selectedField.parameters.reflect_output" type="checkbox" :disabled="selectedField.parameters.preset !== 'custom'" /><span>输出反转 REFOUT</span></label>
+                    <label v-if="selectedField.method === 'custom_js'" class="field span-2"><span>JavaScript 脚本</span><textarea v-model="selectedField.script" class="mono-input" rows="8" maxlength="16384" spellcheck="false" title="可读取只读 bytes 数组；返回整数、BigInt，或与输出长度相同的 HEX 字符串" placeholder="return bytes.reduce((sum, byte) => sum + byte, 0);"></textarea></label>
                   </template>
                 </div>
               </template>

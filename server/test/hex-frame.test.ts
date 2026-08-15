@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildHexFrame, crc16, CRC16_PRESETS, HexFrameSession } from "../src/core/hex-frame.js";
+import { buildHexFrame, crc, crc16, CRC_PRESETS, CRC16_PRESETS, HexFrameSession } from "../src/core/hex-frame.js";
 import type { HexFrameConfig } from "../src/core/types.js";
 
 describe("HEX frame builder", () => {
@@ -12,6 +12,15 @@ describe("HEX frame builder", () => {
     ["kermit", 0x2189],
   ] as const)("计算 CRC16-%s 标准校验向量", (preset, expected) => {
     expect(crc16(Buffer.from("123456789"), { preset, ...CRC16_PRESETS[preset] })).toBe(expected);
+  });
+
+  it.each([
+    ["crc8", 0xf4],
+    ["crc8_maxim", 0xa1],
+    ["crc32", 0xcbf4_3926],
+    ["crc32_mpeg2", 0x0376_e6e7],
+  ] as const)("计算 %s 标准校验向量", (preset, expected) => {
+    expect(crc(Buffer.from("123456789"), { preset, ...CRC_PRESETS[preset] })).toBe(expected);
   });
 
   it("按用户字段顺序组帧并计算长度、序号和 CRC", () => {
@@ -29,7 +38,10 @@ describe("HEX frame builder", () => {
           id: "crc",
           kind: "checksum",
           name: "MODBUS",
+          method: "crc",
+          byte_length: 2,
           parameters: { preset: "modbus", ...CRC16_PRESETS.modbus },
+          script: "",
           byte_order: "little",
           range_start_id: "head",
           range_end_id: "data",
@@ -96,7 +108,7 @@ describe("HEX frame builder", () => {
     expect(buildHexFrame(config, "").data.toString("hex").toUpperCase()).toBe("0003AA");
   });
 
-  it("拒绝 CRC16 校验区间引用尚未计算的后续 CRC16", () => {
+  it("拒绝校验区间引用尚未计算的后续校验字段", () => {
     const parameters = { preset: "modbus" as const, ...CRC16_PRESETS.modbus };
     const config: HexFrameConfig = {
       version: 1,
@@ -104,11 +116,67 @@ describe("HEX frame builder", () => {
       enabled: true,
       fields: [
         { id: "head", kind: "header", name: "帧头", value: "AA" },
-        { id: "crc-1", kind: "checksum", name: "第一段 CRC", parameters, byte_order: "little", range_start_id: "crc-2", range_end_id: "crc-2" },
-        { id: "crc-2", kind: "checksum", name: "第二段 CRC", parameters, byte_order: "little", range_start_id: "head", range_end_id: "head" },
+        { id: "crc-1", kind: "checksum", name: "第一段 CRC", method: "crc", byte_length: 2, parameters, script: "", byte_order: "little", range_start_id: "crc-2", range_end_id: "crc-2" },
+        { id: "crc-2", kind: "checksum", name: "第二段 CRC", method: "crc", byte_length: 2, parameters, script: "", byte_order: "little", range_start_id: "head", range_end_id: "head" },
       ],
     };
-    expect(() => buildHexFrame(config, "")).toThrow("后续 CRC16");
+    expect(() => buildHexFrame(config, "")).toThrow("后续校验字段");
+  });
+
+  it("允许累加和、异或与自定义 JS 校验在同一帧中组合", () => {
+    const parameters = { preset: "modbus" as const, ...CRC16_PRESETS.modbus };
+    const config: HexFrameConfig = {
+      version: 1,
+      id: "multiple-checksums",
+      enabled: true,
+      fields: [
+        { id: "head", kind: "header", name: "输入", value: "01 02 04" },
+        { id: "sum", kind: "checksum", name: "SUM16", method: "sum", byte_length: 2, parameters, script: "", byte_order: "little", range_start_id: "head", range_end_id: "head" },
+        { id: "xor", kind: "checksum", name: "XOR8", method: "xor", byte_length: 1, parameters, script: "", byte_order: "big", range_start_id: "head", range_end_id: "head" },
+        { id: "js", kind: "checksum", name: "JS", method: "custom_js", byte_length: 1, parameters, script: "if (typeof process !== 'undefined' || typeof require !== 'undefined' || typeof SharedArrayBuffer !== 'undefined' || typeof Atomics !== 'undefined') throw new Error('环境未隔离'); return bytes.reduce((sum, byte) => sum + byte, 0) & 0xFF;", byte_order: "big", range_start_id: "head", range_end_id: "head" },
+      ],
+    };
+
+    expect(buildHexFrame(config, "").data.toString("hex").toUpperCase()).toBe("01020407000707");
+  });
+
+  it("自定义 JS 支持 BigInt 和定长 HEX 字符串返回值", () => {
+    const parameters = { preset: "modbus" as const, ...CRC16_PRESETS.modbus };
+    const base = { version: 1 as const, enabled: true };
+    const bigintConfig: HexFrameConfig = {
+      ...base,
+      id: "custom-bigint",
+      fields: [
+        { id: "data", kind: "header", name: "输入", value: "01 02 04" },
+        { id: "js", kind: "checksum", name: "JS", method: "custom_js", byte_length: 8, parameters, script: "return bytes.reduce((value, byte) => (value << 8n) | BigInt(byte), 0n);", byte_order: "big", range_start_id: "data", range_end_id: "data" },
+      ],
+    };
+    const hexConfig: HexFrameConfig = {
+      ...base,
+      id: "custom-hex",
+      fields: [
+        { id: "data", kind: "header", name: "输入", value: "01" },
+        { id: "js", kind: "checksum", name: "JS", method: "custom_js", byte_length: 2, parameters, script: "return 'AA 55';", byte_order: "little", range_start_id: "data", range_end_id: "data" },
+      ],
+    };
+
+    expect(buildHexFrame(bigintConfig, "").data.toString("hex").toUpperCase()).toBe("0102040000000000010204");
+    expect(buildHexFrame(hexConfig, "").data.toString("hex").toUpperCase()).toBe("01AA55");
+  });
+
+  it("限制自定义 JS 执行时间并拒绝无效返回值", () => {
+    const parameters = { preset: "modbus" as const, ...CRC16_PRESETS.modbus };
+    const field = { id: "js", kind: "checksum" as const, name: "JS", method: "custom_js" as const, byte_length: 1 as const, parameters, script: "while (true) {}", byte_order: "big" as const, range_start_id: "data", range_end_id: "data" };
+    const config: HexFrameConfig = {
+      version: 1,
+      id: "custom-timeout",
+      enabled: true,
+      fields: [{ id: "data", kind: "header", name: "输入", value: "01" }, field],
+    };
+
+    expect(() => buildHexFrame(config, "")).toThrow("执行失败");
+    field.script = "return { value: 1 };";
+    expect(() => buildHexFrame(config, "")).toThrow("必须返回非负整数");
   });
 
   it("发送成功后才提交序号，失败发送不递增", async () => {

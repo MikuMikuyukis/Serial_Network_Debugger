@@ -6,7 +6,7 @@ import fastifyWebsocket from "@fastify/websocket";
 import { SerialPort } from "serialport";
 import { ZodError } from "zod";
 import { encodePayload } from "../core/codec.js";
-import { buildHexFrame, HexFrameSession } from "../core/hex-frame.js";
+import { buildHexFrame, containsCustomChecksum, HexFrameSession } from "../core/hex-frame.js";
 import { EventBroker } from "../core/event-broker.js";
 import { PeriodicSender } from "../core/periodic-sender.js";
 import { APPLICATION_VERSION } from "../version.js";
@@ -84,6 +84,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       const frameConfig = body.format === "hex" && body.frame_config?.enabled
         ? body.frame_config
         : undefined;
+      assertCustomChecksumAllowed(request.ip, frameConfig);
       const frame = frameConfig
         ? await frameSession.send(frameConfig, body.data, (data) => manager.send(data))
         : null;
@@ -105,6 +106,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.post("/api/frame/preview", async (request, reply) => {
     try {
       const body = hexFramePreviewSchema.parse(request.body);
+      assertCustomChecksumAllowed(request.ip, body.frame_config);
       const frame = buildHexFrame(body.frame_config, body.data);
       return {
         hex: frame.data.toString("hex").toUpperCase().replaceAll(/(..)(?=.)/g, "$1 "),
@@ -122,6 +124,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       const frameConfig = body.format === "hex" && body.frame_config?.enabled
         ? body.frame_config
         : undefined;
+      assertCustomChecksumAllowed(request.ip, frameConfig);
       const initialFrame = frameConfig ? frameSession.preview(frameConfig, body.data).data : null;
       const payload = frameConfig
         ? Buffer.alloc(0)
@@ -177,10 +180,29 @@ function sendRequestError(
       detail: error.issues.map((issue) => ({ msg: issue.message, loc: issue.path })),
     });
   }
+  if (error instanceof CustomChecksumAccessError) {
+    broker.publish({ type: "error", message: error.message });
+    return reply.status(403).send({ detail: error.message });
+  }
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof TransportError || error instanceof Error) {
     broker.publish({ type: "error", message });
     return reply.status(400).send({ detail: message });
   }
   throw error;
+}
+
+class CustomChecksumAccessError extends Error {}
+
+function assertCustomChecksumAllowed(address: string, config: Parameters<typeof containsCustomChecksum>[0]): void {
+  if (!containsCustomChecksum(config) || isLoopbackAddress(address)) return;
+  throw new CustomChecksumAccessError("自定义 JS 校验仅允许从本机回环地址使用");
+}
+
+function isLoopbackAddress(address: string): boolean {
+  const normalized = address.toLowerCase();
+  return normalized === "::1"
+    || normalized === "0:0:0:0:0:0:0:1"
+    || /^127(?:\.\d{1,3}){3}$/.test(normalized)
+    || /^::ffff:127(?:\.\d{1,3}){3}$/.test(normalized);
 }

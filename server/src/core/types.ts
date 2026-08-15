@@ -4,6 +4,8 @@ export type TextEncoding = "utf-8" | "ascii" | "gbk";
 export type LineEnding = "none" | "cr" | "lf" | "crlf";
 export type ByteOrder = "big" | "little";
 export type FrameByteLength = 1 | 2 | 3 | 4 | 8;
+export type ChecksumMethod = "crc" | "sum" | "xor" | "custom_js";
+export type CrcWidth = 8 | 16 | 32;
 export type FrameGeneratorControl = "none" | "uint_slider" | "int_slider" | "float32_slider" | "float64_slider" | "bit_checkboxes" | "bit_radio" | "byte_switches" | "enum" | "bcd_slider";
 
 export interface HexFrameGenerator {
@@ -51,8 +53,9 @@ export interface HexFrameDataField extends HexFrameFieldBase {
   generator?: HexFrameGenerator;
 }
 
-export interface Crc16Parameters {
-  preset: "modbus" | "arc" | "ccitt_false" | "xmodem" | "x25" | "kermit" | "custom";
+export interface CrcParameters {
+  preset: "crc8" | "crc8_maxim" | "modbus" | "arc" | "ccitt_false" | "xmodem" | "x25" | "kermit" | "crc32" | "crc32_mpeg2" | "custom";
+  width: CrcWidth;
   polynomial: string;
   initial: string;
   xor_out: string;
@@ -62,7 +65,10 @@ export interface Crc16Parameters {
 
 export interface HexFrameChecksumField extends HexFrameFieldBase {
   kind: "checksum";
-  parameters: Crc16Parameters;
+  method: ChecksumMethod;
+  byte_length: FrameByteLength;
+  parameters: CrcParameters;
+  script: string;
   byte_order: ByteOrder;
   range_start_id: string | null;
   range_end_id: string | null;

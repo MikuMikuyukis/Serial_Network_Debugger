@@ -1,7 +1,9 @@
 import { parseHex } from "./codec.js";
+import { executeCustomChecksumScript } from "./custom-checksum-sandbox.js";
 import type {
   ByteOrder,
-  Crc16Parameters,
+  CrcParameters,
+  HexFrameChecksumField,
   HexFrameConfig,
   HexFrameField,
 } from "./types.js";
@@ -48,14 +50,31 @@ export class HexFrameSession {
   }
 }
 
-export const CRC16_PRESETS: Record<Exclude<Crc16Parameters["preset"], "custom">, Omit<Crc16Parameters, "preset">> = {
-  modbus: { polynomial: "8005", initial: "FFFF", xor_out: "0000", reflect_input: true, reflect_output: true },
-  arc: { polynomial: "8005", initial: "0000", xor_out: "0000", reflect_input: true, reflect_output: true },
-  ccitt_false: { polynomial: "1021", initial: "FFFF", xor_out: "0000", reflect_input: false, reflect_output: false },
-  xmodem: { polynomial: "1021", initial: "0000", xor_out: "0000", reflect_input: false, reflect_output: false },
-  x25: { polynomial: "1021", initial: "FFFF", xor_out: "FFFF", reflect_input: true, reflect_output: true },
-  kermit: { polynomial: "1021", initial: "0000", xor_out: "0000", reflect_input: true, reflect_output: true },
+export const CRC_PRESETS: Record<Exclude<CrcParameters["preset"], "custom">, Omit<CrcParameters, "preset">> = {
+  crc8: { width: 8, polynomial: "07", initial: "00", xor_out: "00", reflect_input: false, reflect_output: false },
+  crc8_maxim: { width: 8, polynomial: "31", initial: "00", xor_out: "00", reflect_input: true, reflect_output: true },
+  modbus: { width: 16, polynomial: "8005", initial: "FFFF", xor_out: "0000", reflect_input: true, reflect_output: true },
+  arc: { width: 16, polynomial: "8005", initial: "0000", xor_out: "0000", reflect_input: true, reflect_output: true },
+  ccitt_false: { width: 16, polynomial: "1021", initial: "FFFF", xor_out: "0000", reflect_input: false, reflect_output: false },
+  xmodem: { width: 16, polynomial: "1021", initial: "0000", xor_out: "0000", reflect_input: false, reflect_output: false },
+  x25: { width: 16, polynomial: "1021", initial: "FFFF", xor_out: "FFFF", reflect_input: true, reflect_output: true },
+  kermit: { width: 16, polynomial: "1021", initial: "0000", xor_out: "0000", reflect_input: true, reflect_output: true },
+  crc32: { width: 32, polynomial: "04C11DB7", initial: "FFFFFFFF", xor_out: "FFFFFFFF", reflect_input: true, reflect_output: true },
+  crc32_mpeg2: { width: 32, polynomial: "04C11DB7", initial: "FFFFFFFF", xor_out: "00000000", reflect_input: false, reflect_output: false },
 };
+
+export const CRC16_PRESETS = {
+  modbus: CRC_PRESETS.modbus,
+  arc: CRC_PRESETS.arc,
+  ccitt_false: CRC_PRESETS.ccitt_false,
+  xmodem: CRC_PRESETS.xmodem,
+  x25: CRC_PRESETS.x25,
+  kermit: CRC_PRESETS.kermit,
+} as const;
+
+export function containsCustomChecksum(config: HexFrameConfig | undefined): boolean {
+  return Boolean(config?.fields.some((field) => field.kind === "checksum" && field.method === "custom_js"));
+}
 
 export function buildHexFrame(
   config: HexFrameConfig,
@@ -80,7 +99,7 @@ export function buildHexFrame(
     const defaultEnd = Math.max(index - 1, 0);
     const range = resolveRange(config.fields, field.range_start_id, field.range_end_id, 0, defaultEnd);
     if (range.start <= index && index <= range.end) {
-      throw new Error(`${field.name || "CRC16"} 的校验区间不能包含自身`);
+      throw new Error(`${field.name || "校验字段"} 的校验区间不能包含自身`);
     }
     const unresolvedChecksum = config.fields.findIndex((candidate, candidateIndex) => (
       candidateIndex >= index
@@ -89,11 +108,10 @@ export function buildHexFrame(
       && candidate.kind === "checksum"
     ));
     if (unresolvedChecksum >= 0) {
-      throw new Error(`${field.name || "CRC16"} 的校验区间不能包含自身或后续 CRC16 字段`);
+      throw new Error(`${field.name || "校验字段"} 的校验区间不能包含自身或后续校验字段`);
     }
     const input = Buffer.concat(parts.slice(range.start, range.end + 1));
-    const checksum = crc16(input, field.parameters);
-    parts[index] = encodeUnsigned(BigInt(checksum), 2, field.byte_order, `校验 ${field.name}`);
+    parts[index] = buildChecksum(field, input);
   });
 
   const data = Buffer.concat(parts);
@@ -112,29 +130,90 @@ export function buildHexFrame(
   return { data, nextSequences };
 }
 
-export function crc16(data: Uint8Array, parameters: Crc16Parameters): number {
-  const polynomial = parseCrcWord(parameters.polynomial, "CRC16 多项式");
-  let crc = parseCrcWord(parameters.initial, "CRC16 初始值");
-  const xorOut = parseCrcWord(parameters.xor_out, "CRC16 结果异或值");
+export function crc(data: Uint8Array, parameters: CrcParameters): number {
+  const width = parameters.width;
+  const polynomial = parseCrcValue(parameters.polynomial, width, "CRC 多项式");
+  let value = parseCrcValue(parameters.initial, width, "CRC 初始值");
+  const xorOut = parseCrcValue(parameters.xor_out, width, "CRC 结果异或值");
+  const mask = width === 32 ? 0xffff_ffff : (1 << width) - 1;
 
   if (parameters.reflect_input) {
-    const reflectedPolynomial = reflect16(polynomial);
+    const reflectedPolynomial = reflectBits(polynomial, width);
     for (const byte of data) {
-      crc ^= byte;
+      value = (value ^ byte) >>> 0;
       for (let bit = 0; bit < 8; bit += 1) {
-        crc = (crc & 1) !== 0 ? (crc >>> 1) ^ reflectedPolynomial : crc >>> 1;
+        value = (value & 1) !== 0 ? ((value >>> 1) ^ reflectedPolynomial) >>> 0 : value >>> 1;
       }
+      if (width < 32) value &= mask;
     }
   } else {
+    const topBit = width === 32 ? 0x8000_0000 : 1 << (width - 1);
     for (const byte of data) {
-      crc ^= byte << 8;
+      value = (value ^ (byte << (width - 8))) >>> 0;
       for (let bit = 0; bit < 8; bit += 1) {
-        crc = (crc & 0x8000) !== 0 ? ((crc << 1) ^ polynomial) & 0xffff : (crc << 1) & 0xffff;
+        value = (value & topBit) !== 0 ? ((value << 1) ^ polynomial) >>> 0 : (value << 1) >>> 0;
+        if (width < 32) value &= mask;
       }
     }
   }
-  if (parameters.reflect_output !== parameters.reflect_input) crc = reflect16(crc);
-  return (crc ^ xorOut) & 0xffff;
+  if (parameters.reflect_output !== parameters.reflect_input) value = reflectBits(value, width);
+  value = (value ^ xorOut) >>> 0;
+  return width === 32 ? value : (value & mask) >>> 0;
+}
+
+export function crc16(data: Uint8Array, parameters: CrcParameters): number {
+  if (parameters.width !== 16) throw new Error("crc16() 只接受 16 位 CRC 参数");
+  return crc(data, parameters);
+}
+
+function buildChecksum(field: HexFrameChecksumField, input: Buffer): Buffer {
+  const label = `校验 ${field.name || "字段"}`;
+  if (field.method === "crc") {
+    const expectedLength = field.parameters.width / 8;
+    if (field.byte_length !== expectedLength) throw new Error(`${label} 的输出长度必须是 ${expectedLength} 字节`);
+    return encodeUnsigned(BigInt(crc(input, field.parameters)), field.byte_length, field.byte_order, label);
+  }
+  if (field.method === "sum") {
+    const modulus = 1n << BigInt(field.byte_length * 8);
+    let sum = 0n;
+    for (const byte of input) sum = (sum + BigInt(byte)) % modulus;
+    return encodeUnsigned(sum, field.byte_length, field.byte_order, label);
+  }
+  if (field.method === "xor") {
+    let value = 0;
+    for (const byte of input) value ^= byte;
+    return encodeUnsigned(BigInt(value), field.byte_length, field.byte_order, label);
+  }
+  return runCustomChecksum(field, input);
+}
+
+function runCustomChecksum(field: HexFrameChecksumField, input: Buffer): Buffer {
+  if (!field.script.trim()) throw new Error(`${field.name || "自定义 JS 校验"} 的脚本不能为空`);
+  let result: unknown;
+  try {
+    result = executeCustomChecksumScript(field.script, input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${field.name || "自定义 JS 校验"} 执行失败：${message}`);
+  }
+
+  if (typeof result === "string") {
+    const output = parseFieldHex(result, field.name || "自定义 JS 校验");
+    if (output.length !== field.byte_length) {
+      throw new Error(`${field.name || "自定义 JS 校验"} 必须返回 ${field.byte_length} 字节 HEX 字符串`);
+    }
+    return output;
+  }
+  if (typeof result === "number") {
+    if (!Number.isSafeInteger(result) || result < 0) {
+      throw new Error(`${field.name || "自定义 JS 校验"} 必须返回非负安全整数、BigInt 或 HEX 字符串`);
+    }
+    return encodeUnsigned(BigInt(result), field.byte_length, field.byte_order, field.name || "自定义 JS 校验");
+  }
+  if (typeof result === "bigint") {
+    return encodeUnsigned(result, field.byte_length, field.byte_order, field.name || "自定义 JS 校验");
+  }
+  throw new Error(`${field.name || "自定义 JS 校验"} 必须返回非负整数、BigInt 或 HEX 字符串`);
 }
 
 function initialFieldBytes(
@@ -154,7 +233,7 @@ function initialFieldBytes(
     case "length":
       return Buffer.alloc(field.byte_length);
     case "checksum":
-      return Buffer.alloc(2);
+      return Buffer.alloc(field.byte_length);
     case "data": {
       const value = field.source === "editor" ? editorData : field.value;
       return encodeDataField(field, value);
@@ -306,18 +385,19 @@ function formatUnsignedHex(value: bigint, byteLength: number): string {
   return value.toString(16).toUpperCase().padStart(byteLength * 2, "0");
 }
 
-function parseCrcWord(value: string, label: string): number {
+function parseCrcValue(value: string, width: number, label: string): number {
   const parsed = parseUnsignedHex(value, label);
-  if (parsed > 0xffffn) throw new Error(`${label} 超出 16 位范围`);
+  const maximum = (1n << BigInt(width)) - 1n;
+  if (parsed > maximum) throw new Error(`${label} 超出 ${width} 位范围`);
   return Number(parsed);
 }
 
-function reflect16(value: number): number {
+function reflectBits(value: number, width: number): number {
   let reflected = 0;
-  for (let bit = 0; bit < 16; bit += 1) {
-    reflected = (reflected << 1) | ((value >>> bit) & 1);
+  for (let bit = 0; bit < width; bit += 1) {
+    reflected = ((reflected << 1) | ((value >>> bit) & 1)) >>> 0;
   }
-  return reflected & 0xffff;
+  return reflected;
 }
 
 function ensureUniqueFieldIds(fields: HexFrameField[]): void {
