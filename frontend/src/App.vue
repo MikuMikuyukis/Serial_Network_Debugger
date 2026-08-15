@@ -227,6 +227,7 @@ onBeforeUnmount(() => {
         :events-connected="eventsConnected"
         @status="applyStatus"
         @error="showToast"
+        @notice="showToast($event, false)"
       />
       <div class="configuration-file-actions">
         <button class="bar-icon-button" type="button" title="保存全部配置" aria-label="保存全部配置" @click="persistActiveProfile(true)">

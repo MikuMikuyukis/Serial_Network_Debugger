@@ -149,6 +149,40 @@ describe("HTTP and WebSocket API", () => {
     client.destroy();
   });
 
+  it("连接存在时提交新配置会替换旧 transport", async () => {
+    const app = await makeApp();
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/connect",
+      payload: { mode: "tcp_server", host: "127.0.0.1", port: 0 },
+    });
+    expect(first.statusCode).toBe(200);
+    const firstPort = (first.json() as { details: { port: number } }).details.port;
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/connect",
+      payload: {
+        mode: "udp",
+        local_host: "127.0.0.1",
+        local_port: 0,
+        remote_host: null,
+        remote_port: null,
+      },
+    });
+    expect(second.statusCode).toBe(200);
+    expect(second.json()).toMatchObject({ connected: true, mode: "udp" });
+
+    await expect(new Promise<void>((resolve, reject) => {
+      const client = net.createConnection(firstPort, "127.0.0.1");
+      client.once("connect", () => {
+        client.destroy();
+        reject(new Error("旧 TCP Server 仍在监听"));
+      });
+      client.once("error", () => resolve());
+    })).resolves.toBeUndefined();
+  });
+
   it("HEX 帧预览等于实际发送字节，失败发送不递增序号", async () => {
     const app = await makeApp();
     const frameConfig = sequenceFrameConfig("api-manual-frame", "20");

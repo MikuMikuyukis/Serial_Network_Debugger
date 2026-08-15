@@ -74,6 +74,8 @@ ConnectionBar
   -> 页面状态与日志
 ```
 
+`ConnectionBar.vue` 允许在已连接或 TCP Client 自动重连期间编辑设置。应用或全局保存通信草稿时，先通过 `transport-config.ts` 规范化并比较当前模式配置；未变化只保存，变化时再次调用 `/api/connect`。`TransportManager.connect()` 在同一个串行操作中停止旧 transport 后创建新 transport，成功或失败由顶层 Toast 在右下角提示。新连接失败时不会恢复旧 transport；新配置保留在当前 profile，运行状态刷新为未连接。连接切换仍会停止周期发送。
+
 发送流程：
 
 ```text
@@ -94,6 +96,7 @@ ConnectionBar
 - Serial 使用 `receive_idle_ms` 合并底层读取块；持续空闲达到该间隔才形成一条 RX 记录。
 - TCP 是字节流，不保留发送端业务帧边界。不要把一次 `data` 事件等同于一帧。
 - TCP Client 可选自动重连；用户主动断开后旧连接尝试必须通过 generation 状态失效。
+- 连接中应用不同通信参数会替换当前 transport；相同的规范化配置不得造成无意义断线重连。
 - TCP Server 的发送会广播给全部已连接客户端。
 - UDP 配置固定远端时发往固定地址；未配置时发往最近一个数据报来源。
 - 串口一般由一个进程独占。浏览器服务和 Electron 不应同时连接同一串口。
@@ -319,7 +322,7 @@ npm run build
 git diff --check
 ```
 
-截至 2026-08-15 当前基线：11 个测试文件、89 项测试通过，前端/服务端/Electron 类型检查和完整构建通过。后续新增测试后应更新这里和 README 中涉及的数字，或者改为不写固定数量。
+截至 2026-08-15 当前基线：12 个测试文件、94 项测试通过，前端/服务端/Electron 类型检查和完整构建通过。后续新增测试后应更新这里和 README 中涉及的数字，或者改为不写固定数量。
 
 测试使用本机回环 TCP/UDP，不需要物理串口。如果 Electron 或旧开发服务器正在运行，可能造成端口或计时竞争；先停止项目进程再重试。
 

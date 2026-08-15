@@ -8,6 +8,7 @@ import {
   saveTransportSettings,
   type TransportSettings,
 } from "../storage";
+import { areTransportConfigsEqual, buildTransportConfig } from "../transport-config";
 import type { SerialPortInfo, TransportConfig, TransportMode, TransportStatus } from "../types";
 
 const props = defineProps<{
@@ -19,6 +20,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   status: [status: TransportStatus];
   error: [message: string];
+  notice: [message: string];
 }>();
 
 const modes: Array<{ value: TransportMode; label: string }> = [
@@ -68,21 +70,77 @@ function handleKeydown(event: KeyboardEvent): void {
   if (event.key === "Escape" && modalOpen.value) closeSettings();
 }
 
+interface CommittedSettings {
+  config: TransportConfig | null;
+  reconnect: boolean;
+  sessionWasActive: boolean;
+}
+
 function applySettings(): void {
-  if (persistPendingState()) closeSettings();
+  const committed = commitPendingSettings();
+  if (!committed) return;
+  closeSettings();
+  if (committed.reconnect && committed.config) {
+    void reconnectAfterSettingsChange(committed.config);
+  } else {
+    emit("notice", committed.sessionWasActive ? "通信设置未变化，保持当前连接" : "通信设置已保存");
+  }
 }
 
 function persistPendingState(): boolean {
+  const committed = commitPendingSettings();
+  if (!committed) return false;
+  if (committed.reconnect && committed.config) void reconnectAfterSettingsChange(committed.config);
+  return true;
+}
+
+function commitPendingSettings(): CommittedSettings | null {
   try {
-    if (modalOpen.value && !sessionActive.value) {
-      buildConfig(draft.value);
-      settings.value = cloneTransportSettings(draft.value);
+    if (!modalOpen.value) {
+      saveTransportSettings(settings.value, props.profileId);
+      return { config: null, reconnect: false, sessionWasActive: sessionActive.value };
     }
+
+    const nextSettings = cloneTransportSettings(draft.value);
+    const nextConfig = buildTransportConfig(nextSettings);
+    const sessionWasActive = sessionActive.value;
+    let reconnect = false;
+    if (sessionWasActive) {
+      try {
+        reconnect = !areTransportConfigsEqual(buildTransportConfig(settings.value), nextConfig);
+      } catch {
+        reconnect = true;
+      }
+    }
+    settings.value = nextSettings;
     saveTransportSettings(settings.value, props.profileId);
-    return true;
+    return { config: nextConfig, reconnect, sessionWasActive };
   } catch (error) {
     emit("error", error instanceof Error ? error.message : "通信配置无效");
-    return false;
+    return null;
+  }
+}
+
+async function reconnectAfterSettingsChange(config: TransportConfig): Promise<void> {
+  if (busy.value) return;
+  busy.value = true;
+  try {
+    const status = await apiRequest<TransportStatus>("/api/connect", {
+      method: "POST",
+      body: JSON.stringify(config),
+    });
+    emit("status", status);
+    emit("notice", "通信设置已更新，已按新参数重新连接");
+  } catch (error) {
+    try {
+      emit("status", await apiRequest<TransportStatus>("/api/status"));
+    } catch {
+      // The WebSocket status event remains the fallback if this refresh also fails.
+    }
+    const message = error instanceof Error ? error.message : "连接失败";
+    emit("error", `通信设置已保存，但按新参数重新连接失败：${message}`);
+  } finally {
+    busy.value = false;
   }
 }
 
@@ -91,7 +149,7 @@ defineExpose({ persistPendingState });
 async function connect(): Promise<void> {
   busy.value = true;
   try {
-    const config = buildConfig(settings.value);
+    const config = buildTransportConfig(settings.value);
     saveTransportSettings(settings.value, props.profileId);
     const status = await apiRequest<TransportStatus>("/api/connect", {
       method: "POST",
@@ -129,33 +187,6 @@ async function refreshPorts(): Promise<void> {
   } finally {
     refreshingPorts.value = false;
   }
-}
-
-function buildConfig(source: TransportSettings): TransportConfig {
-  if (source.mode === "serial") {
-    if (!source.serial.port.trim()) throw new Error("请选择要打开的串口设备");
-    return { ...source.serial, port: source.serial.port.trim() };
-  }
-  if (source.mode === "tcp_client") {
-    if (!source.tcpClient.host.trim()) throw new Error("请填写 TCP 远端地址");
-    return { ...source.tcpClient, host: source.tcpClient.host.trim() };
-  }
-  if (source.mode === "tcp_server") {
-    if (!source.tcpServer.host.trim()) throw new Error("请填写 TCP 监听地址");
-    return { ...source.tcpServer, host: source.tcpServer.host.trim() };
-  }
-
-  const remoteHost = source.udp.remote_host?.trim() || null;
-  const remotePort = source.udp.remote_port || null;
-  if ((remoteHost === null) !== (remotePort === null)) {
-    throw new Error("UDP 远端地址和端口必须同时填写或同时留空");
-  }
-  return {
-    ...source.udp,
-    local_host: source.udp.local_host.trim(),
-    remote_host: remoteHost,
-    remote_port: remotePort,
-  };
 }
 
 function summarizeConfig(source: TransportSettings): string {
@@ -255,7 +286,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
               :key="item.value"
               class="mode-tab"
               :class="{ active: draft.mode === item.value }"
-              :disabled="sessionActive"
+              :disabled="busy"
               type="button"
               @click="draft.mode = item.value"
             >
@@ -263,7 +294,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
             </button>
           </div>
 
-          <fieldset :disabled="sessionActive" class="settings-fields">
+          <fieldset :disabled="busy" class="settings-fields">
             <div v-if="draft.mode === 'serial'" class="dialog-grid">
               <label class="field span-2">
                 <span>串口设备</span>
@@ -310,12 +341,18 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
             </div>
           </fieldset>
 
-          <p v-if="sessionActive" class="dialog-notice">{{ reconnecting ? "正在自动重连，停止重连后才能修改设置。" : "通信已连接，断开后才能修改设置。" }}</p>
+          <p v-if="sessionActive" class="dialog-notice">
+            {{ reconnecting
+              ? "TCP Client 正在自动重连；修改参数并应用后，将停止旧重连并按新设置连接。"
+              : "通信已连接；检测到当前通信参数变化后，将自动按新设置重新连接。" }}
+          </p>
         </div>
 
         <footer class="dialog-footer">
           <button class="dialog-button secondary" type="button" @click="closeSettings">取消</button>
-          <button class="dialog-button primary" type="button" :disabled="sessionActive" @click="applySettings">应用设置</button>
+          <button class="dialog-button primary" type="button" :disabled="busy" @click="applySettings">
+            {{ busy ? "通信处理中..." : "应用设置" }}
+          </button>
         </footer>
       </section>
     </div>
