@@ -33,6 +33,14 @@ export interface ConfigurationProfile {
   updated_at: string;
 }
 
+export type PresetColumnId = "enabled" | "name" | "data" | "format" | "delay" | "actions";
+
+export interface LayoutPreferences {
+  version: 1;
+  tool_panel_ratio: number;
+  preset_columns: Record<PresetColumnId, number>;
+}
+
 export interface ConfigurationBackupProfile {
   metadata: ConfigurationProfile;
   transport: TransportSettings;
@@ -59,12 +67,35 @@ const HEX_FRAME_CONFIG_KEY = "snd.hex-frame-config.v1";
 export const FRAME_PARSER_CONFIG_KEY = "snd.frame-parser-config.v1";
 const PROFILES_KEY = "snd.configuration-profiles.v1";
 const ACTIVE_PROFILE_KEY = "snd.active-configuration-profile.v1";
+export const LAYOUT_PREFERENCES_KEY = "snd.layout-preferences.v1";
 const DEFAULT_PROFILE_ID = "default";
 const BACKUP_APPLICATION = "serial-network-debugger";
 const BACKUP_VERSION = 1;
 export const CONFIGURATION_IMPORT_EVENT_KEY = "snd.configuration-import.v1";
 export const MAX_CONFIGURATION_PROFILES = 20;
 export const MAX_SEND_PRESETS = 100;
+
+export const DEFAULT_LAYOUT_PREFERENCES: LayoutPreferences = {
+  version: 1,
+  tool_panel_ratio: 0.575,
+  preset_columns: {
+    enabled: 70,
+    name: 112,
+    data: 280,
+    format: 188,
+    delay: 92,
+    actions: 134,
+  },
+};
+
+export const PRESET_COLUMN_LIMITS: Record<PresetColumnId, { minimum: number; maximum: number }> = {
+  enabled: { minimum: 64, maximum: 240 },
+  name: { minimum: 80, maximum: 800 },
+  data: { minimum: 120, maximum: 1_600 },
+  format: { minimum: 150, maximum: 480 },
+  delay: { minimum: 80, maximum: 320 },
+  actions: { minimum: 126, maximum: 360 },
+};
 
 export const DEFAULT_HEX_FRAME_CONFIG: HexFrameConfig = {
   version: 1,
@@ -125,6 +156,46 @@ export const DEFAULT_TRANSPORT_SETTINGS: TransportSettings = {
     remote_port: null,
   },
 };
+
+export function loadLayoutPreferences(): LayoutPreferences {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LAYOUT_PREFERENCES_KEY) ?? "null") as unknown;
+    if (!stored || typeof stored !== "object") return structuredClone(DEFAULT_LAYOUT_PREFERENCES);
+    const preferences = stored as Partial<LayoutPreferences>;
+    const columns = preferences.preset_columns;
+    if (preferences.version !== 1 || !columns || typeof columns !== "object") {
+      return structuredClone(DEFAULT_LAYOUT_PREFERENCES);
+    }
+    return {
+      version: 1,
+      tool_panel_ratio: isFiniteNumber(preferences.tool_panel_ratio)
+        && preferences.tool_panel_ratio >= 0.2
+        && preferences.tool_panel_ratio <= 0.8
+        ? preferences.tool_panel_ratio
+        : DEFAULT_LAYOUT_PREFERENCES.tool_panel_ratio,
+      preset_columns: {
+        enabled: normalizePresetColumnWidth("enabled", columns.enabled),
+        name: normalizePresetColumnWidth("name", columns.name),
+        data: normalizePresetColumnWidth("data", columns.data),
+        format: normalizePresetColumnWidth("format", columns.format),
+        delay: normalizePresetColumnWidth("delay", columns.delay),
+        actions: normalizePresetColumnWidth("actions", columns.actions),
+      },
+    };
+  } catch {
+    return structuredClone(DEFAULT_LAYOUT_PREFERENCES);
+  }
+}
+
+export function saveLayoutPreferences(preferences: LayoutPreferences): void {
+  localStorage.setItem(LAYOUT_PREFERENCES_KEY, JSON.stringify(preferences));
+}
+
+export function clampPresetColumnWidth(column: PresetColumnId, value: number): number {
+  const limits = PRESET_COLUMN_LIMITS[column];
+  if (!Number.isFinite(value)) return DEFAULT_LAYOUT_PREFERENCES.preset_columns[column];
+  return Math.min(limits.maximum, Math.max(limits.minimum, Math.round(value)));
+}
 
 export function loadConfigurationProfiles(): ConfigurationProfile[] {
   try {
@@ -786,6 +857,12 @@ function normalizeFrameGenerator(value: unknown): import("./types").HexFrameGene
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function normalizePresetColumnWidth(column: PresetColumnId, value: unknown): number {
+  return isFiniteNumber(value)
+    ? clampPresetColumnWidth(column, value)
+    : DEFAULT_LAYOUT_PREFERENCES.preset_columns[column];
 }
 
 function isDataSource(value: unknown): value is "fixed" | "editor" | "generated" {

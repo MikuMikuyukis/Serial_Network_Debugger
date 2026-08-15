@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONFIGURATION_IMPORT_EVENT_KEY,
+  DEFAULT_LAYOUT_PREFERENCES,
+  LAYOUT_PREFERENCES_KEY,
   cloneSendPreset,
+  clampPresetColumnWidth,
   copyConfigurationProfileData,
   createConfigurationBackup,
   frameParserStorageKey,
@@ -11,6 +14,7 @@ import {
   loadActiveProfileId,
   loadConfigurationProfiles,
   loadHexFrameConfig,
+  loadLayoutPreferences,
   loadFrameParserConfig,
   loadSendEditor,
   loadSendPresets,
@@ -20,6 +24,7 @@ import {
   saveActiveProfileId,
   saveConfigurationProfiles,
   saveHexFrameConfig,
+  saveLayoutPreferences,
   saveFrameParserConfig,
   saveSendEditor,
   saveSendPresets,
@@ -63,6 +68,43 @@ beforeEach(() => {
 });
 
 describe("frontend configuration profile storage", () => {
+  it("保存界面分栏比例和发送预设列宽", () => {
+    const preferences = structuredClone(DEFAULT_LAYOUT_PREFERENCES);
+    preferences.tool_panel_ratio = 0.68;
+    preferences.preset_columns.data = 520;
+    preferences.preset_columns.name = 180;
+
+    saveLayoutPreferences(preferences);
+
+    expect(loadLayoutPreferences()).toEqual(preferences);
+    expect(localStorage.getItem(LAYOUT_PREFERENCES_KEY)).not.toBeNull();
+  });
+
+  it("对损坏或越界的界面尺寸使用安全默认值", () => {
+    localStorage.setItem(LAYOUT_PREFERENCES_KEY, JSON.stringify({
+      version: 1,
+      tool_panel_ratio: 9,
+      preset_columns: {
+        enabled: 1,
+        name: "wide",
+        data: 99_999,
+        format: 188,
+        delay: 92,
+        actions: 134,
+      },
+    }));
+
+    const preferences = loadLayoutPreferences();
+    expect(preferences.tool_panel_ratio).toBe(DEFAULT_LAYOUT_PREFERENCES.tool_panel_ratio);
+    expect(preferences.preset_columns.enabled).toBe(64);
+    expect(preferences.preset_columns.name).toBe(DEFAULT_LAYOUT_PREFERENCES.preset_columns.name);
+    expect(preferences.preset_columns.data).toBe(1_600);
+    expect(clampPresetColumnWidth("delay", Number.NaN)).toBe(DEFAULT_LAYOUT_PREFERENCES.preset_columns.delay);
+
+    localStorage.setItem(LAYOUT_PREFERENCES_KEY, "not-json");
+    expect(loadLayoutPreferences()).toEqual(DEFAULT_LAYOUT_PREFERENCES);
+  });
+
   it("把旧版未分组数据作为默认配置继续读取", () => {
     localStorage.setItem("snd.send-editor.v1", JSON.stringify({
       version: 1,

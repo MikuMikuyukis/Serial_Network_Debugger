@@ -11,14 +11,18 @@ import {
 } from "../hex-display";
 import {
   cloneSendPreset,
+  DEFAULT_LAYOUT_PREFERENCES,
   DEFAULT_HEX_FRAME_CONFIG,
   hexFrameStorageKey,
+  LAYOUT_PREFERENCES_KEY,
+  loadLayoutPreferences,
   loadSendEditor,
   loadHexFrameConfig,
   loadSendPresets,
   MAX_SEND_PRESETS,
   saveSendEditor,
   saveHexFrameConfig,
+  saveLayoutPreferences,
   saveSendPresets,
   sendEditorStorageKey,
   sendPresetsStorageKey,
@@ -72,6 +76,11 @@ const TOOL_ORDER: WorkspaceTool[] = ["presets", "dashboard", "parser"];
 const activeTool = ref<WorkspaceTool>("presets");
 const analyzerView = ref<"dashboard" | "parser">("dashboard");
 const toolPanelOpen = ref(true);
+const trafficWorkspace = ref<HTMLElement | null>(null);
+const toolPanelRatio = ref(loadLayoutPreferences().tool_panel_ratio);
+const trafficWorkspaceStyle = computed<Record<string, string>>(() => ({
+  "--tool-panel-width": `${toolPanelRatio.value * 100}%`,
+}));
 const detachedTools = ref<Record<WorkspaceTool, boolean>>({ presets: false, dashboard: false, parser: false });
 const storedEditor = loadSendEditor(props.profileId);
 const format = ref<DataFormat>(storedEditor.format);
@@ -93,6 +102,7 @@ let sequenceGeneration = 0;
 let editorSaveTimer: number | undefined;
 let presetSaveTimer: number | undefined;
 let presetPreviewTimer: number | undefined;
+let stopWorkspaceResize: (() => void) | null = null;
 const detachedWindows = new Map<WorkspaceTool, Window>();
 const detachedWindowTimers = new Map<WorkspaceTool, number>();
 const presetPreviewSignatures = new Map<string, string>();
@@ -146,6 +156,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   sequenceGeneration += 1;
+  endWorkspaceResize();
   window.removeEventListener("beforeunload", persistPendingState);
   window.removeEventListener("storage", handleStorageChange);
   persistPendingState();
@@ -155,6 +166,76 @@ onBeforeUnmount(() => {
   for (const timer of detachedWindowTimers.values()) window.clearInterval(timer);
   detachedWindowTimers.clear();
 });
+
+function beginWorkspaceResize(event: PointerEvent): void {
+  if (event.button !== 0 || !trafficWorkspace.value) return;
+  event.preventDefault();
+  endWorkspaceResize();
+  document.body.classList.add("layout-resizing");
+  updateToolPanelRatio(event.clientX);
+  const handleMove = (moveEvent: PointerEvent): void => updateToolPanelRatio(moveEvent.clientX);
+  const handleEnd = (): void => {
+    persistLayoutPreferences();
+    endWorkspaceResize();
+  };
+  window.addEventListener("pointermove", handleMove);
+  window.addEventListener("pointerup", handleEnd, { once: true });
+  window.addEventListener("pointercancel", handleEnd, { once: true });
+  stopWorkspaceResize = () => {
+    window.removeEventListener("pointermove", handleMove);
+    window.removeEventListener("pointerup", handleEnd);
+    window.removeEventListener("pointercancel", handleEnd);
+    document.body.classList.remove("layout-resizing");
+  };
+}
+
+function updateToolPanelRatio(clientX: number): void {
+  const bounds = trafficWorkspace.value?.getBoundingClientRect();
+  if (!bounds || bounds.width <= 0) return;
+  toolPanelRatio.value = clampToolPanelRatio((bounds.right - clientX) / bounds.width, bounds.width);
+}
+
+function handleWorkspaceResizeKey(event: KeyboardEvent): void {
+  if (event.key === "Home") {
+    event.preventDefault();
+    resetWorkspaceSize();
+    return;
+  }
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  event.preventDefault();
+  const step = event.shiftKey ? 0.05 : 0.02;
+  const width = trafficWorkspace.value?.clientWidth ?? 1_200;
+  toolPanelRatio.value = clampToolPanelRatio(
+    toolPanelRatio.value + (event.key === "ArrowLeft" ? step : -step),
+    width,
+  );
+  persistLayoutPreferences();
+}
+
+function resetWorkspaceSize(): void {
+  toolPanelRatio.value = DEFAULT_LAYOUT_PREFERENCES.tool_panel_ratio;
+  persistLayoutPreferences();
+}
+
+function clampToolPanelRatio(value: number, workspaceWidth: number): number {
+  const minimum = Math.max(0.2, 360 / workspaceWidth);
+  const maximum = Math.min(0.8, (workspaceWidth - 287) / workspaceWidth);
+  if (minimum > maximum) return Math.min(0.8, Math.max(0.2, value));
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function persistLayoutPreferences(): void {
+  try {
+    saveLayoutPreferences({ ...loadLayoutPreferences(), tool_panel_ratio: toolPanelRatio.value });
+  } catch {
+    // The current layout remains usable when local storage is unavailable.
+  }
+}
+
+function endWorkspaceResize(): void {
+  stopWorkspaceResize?.();
+  stopWorkspaceResize = null;
+}
 
 function selectTool(tool: WorkspaceTool): void {
   if (detachedTools.value[tool]) {
@@ -219,6 +300,10 @@ function focusDetachedTool(tool: WorkspaceTool): void {
 
 function handleStorageChange(event: StorageEvent): void {
   if (event.storageArea !== localStorage) return;
+  if (event.key === LAYOUT_PREFERENCES_KEY) {
+    toolPanelRatio.value = loadLayoutPreferences().tool_panel_ratio;
+    return;
+  }
   if (event.key === sendPresetsStorageKey(props.profileId)) {
     const storedPresets = loadSendPresets(props.profileId);
     if (JSON.stringify(storedPresets) !== JSON.stringify(presets.value)) presets.value = storedPresets;
@@ -765,8 +850,29 @@ function emitError(error: unknown, fallback: string): void {
         </div>
       </div>
 
-    <div v-if="!toolOnly" class="traffic-workspace" :class="{ 'tool-panel-open': toolPanelOpen }">
+    <div
+      v-if="!toolOnly"
+      ref="trafficWorkspace"
+      class="traffic-workspace"
+      :class="{ 'tool-panel-open': toolPanelOpen }"
+      :style="trafficWorkspaceStyle"
+    >
       <VirtualLog :logs="visibleLogs" :display-hex="displayHex" :auto-scroll="autoScroll" />
+      <div
+        v-show="toolPanelOpen"
+        class="workspace-resize-handle"
+        role="separator"
+        aria-label="调整通信日志与工具面板宽度"
+        aria-orientation="vertical"
+        :aria-valuenow="Math.round(toolPanelRatio * 100)"
+        aria-valuemin="20"
+        aria-valuemax="80"
+        tabindex="0"
+        title="拖动调整面板宽度，双击恢复默认"
+        @pointerdown="beginWorkspaceResize"
+        @keydown="handleWorkspaceResizeKey"
+        @dblclick="resetWorkspaceSize"
+      ></div>
       <aside v-show="toolPanelOpen" class="workspace-tool-panel">
         <header class="workspace-tool-tabs">
           <div role="tablist" aria-label="工具面板">

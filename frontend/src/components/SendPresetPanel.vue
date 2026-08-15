@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { Copy, Download, GripVertical, ListStart, Plus, Send, Settings, Square, Trash2, X } from "@lucide/vue";
 import {
   compactHexDisplay,
@@ -8,6 +8,15 @@ import {
   hexDisplayCaret,
   MAX_HEX_DISPLAY_LENGTH,
 } from "../hex-display";
+import {
+  clampPresetColumnWidth,
+  DEFAULT_LAYOUT_PREFERENCES,
+  LAYOUT_PREFERENCES_KEY,
+  loadLayoutPreferences,
+  PRESET_COLUMN_LIMITS,
+  saveLayoutPreferences,
+  type PresetColumnId,
+} from "../storage";
 import type { SendPreset, SendPresetDraft } from "../types";
 import FrameGeneratedControls from "./FrameGeneratedControls.vue";
 
@@ -40,6 +49,98 @@ const emit = defineEmits<{
 const draggedPresetId = ref<string | null>(null);
 const dragOverPresetId = ref<string | null>(null);
 const dragPlacement = ref<"before" | "after">("before");
+const presetColumns: Array<{ id: PresetColumnId; label: string; className?: string }> = [
+  { id: "enabled", label: "启用", className: "preset-col-enabled" },
+  { id: "name", label: "名称", className: "preset-col-name" },
+  { id: "data", label: "发送内容" },
+  { id: "format", label: "格式", className: "preset-col-format" },
+  { id: "delay", label: "延时", className: "preset-col-delay" },
+  { id: "actions", label: "操作", className: "preset-col-actions" },
+];
+const presetColumnIds = presetColumns.map((column) => column.id);
+const columnWidths = ref({ ...loadLayoutPreferences().preset_columns });
+const presetTableStyle = computed<Record<string, string>>(() => ({
+  "--preset-table-width": `${presetColumnIds.reduce((total, column) => total + columnWidths.value[column], 0)}px`,
+}));
+let stopColumnResize: (() => void) | null = null;
+
+onMounted(() => window.addEventListener("storage", handleLayoutStorageChange));
+onBeforeUnmount(() => {
+  endColumnResize();
+  window.removeEventListener("storage", handleLayoutStorageChange);
+});
+
+function beginColumnResize(column: PresetColumnId, event: PointerEvent): void {
+  if (event.button !== 0) return;
+  const header = (event.currentTarget as HTMLElement).parentElement;
+  const startWidth = header?.getBoundingClientRect().width ?? columnWidths.value[column];
+  const startX = event.clientX;
+  endColumnResize();
+  document.body.classList.add("layout-resizing");
+  const handleMove = (moveEvent: PointerEvent): void => {
+    setColumnWidth(column, startWidth + moveEvent.clientX - startX);
+  };
+  const handleEnd = (): void => {
+    persistColumnWidths();
+    endColumnResize();
+  };
+  window.addEventListener("pointermove", handleMove);
+  window.addEventListener("pointerup", handleEnd, { once: true });
+  window.addEventListener("pointercancel", handleEnd, { once: true });
+  stopColumnResize = () => {
+    window.removeEventListener("pointermove", handleMove);
+    window.removeEventListener("pointerup", handleEnd);
+    window.removeEventListener("pointercancel", handleEnd);
+    document.body.classList.remove("layout-resizing");
+  };
+}
+
+function handleColumnResizeKey(column: PresetColumnId, event: KeyboardEvent): void {
+  if (event.key === "Home") {
+    event.preventDefault();
+    resetColumnWidth(column);
+    return;
+  }
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  event.preventDefault();
+  const step = event.shiftKey ? 40 : 10;
+  setColumnWidth(column, columnWidths.value[column] + (event.key === "ArrowRight" ? step : -step));
+  persistColumnWidths();
+}
+
+function setColumnWidth(column: PresetColumnId, width: number): void {
+  columnWidths.value = {
+    ...columnWidths.value,
+    [column]: clampPresetColumnWidth(column, width),
+  };
+}
+
+function presetColumnStyle(column: PresetColumnId): Record<string, string> {
+  return { width: `${columnWidths.value[column]}px` };
+}
+
+function resetColumnWidth(column: PresetColumnId): void {
+  setColumnWidth(column, DEFAULT_LAYOUT_PREFERENCES.preset_columns[column]);
+  persistColumnWidths();
+}
+
+function persistColumnWidths(): void {
+  try {
+    saveLayoutPreferences({ ...loadLayoutPreferences(), preset_columns: { ...columnWidths.value } });
+  } catch {
+    // The table remains adjustable for the current session if persistence fails.
+  }
+}
+
+function handleLayoutStorageChange(event: StorageEvent): void {
+  if (event.storageArea !== localStorage || event.key !== LAYOUT_PREFERENCES_KEY) return;
+  columnWidths.value = { ...loadLayoutPreferences().preset_columns };
+}
+
+function endColumnResize(): void {
+  stopColumnResize?.();
+  stopColumnResize = null;
+}
 
 function startPresetDrag(presetId: string, event: DragEvent): void {
   if ((event.currentTarget as HTMLButtonElement).disabled) {
@@ -202,15 +303,29 @@ function handlePresetDataKeydown(preset: SendPreset, event: KeyboardEvent): void
     </header>
 
     <div class="preset-table-wrap">
-      <table class="preset-table">
+      <table class="preset-table" :style="presetTableStyle">
+        <colgroup>
+          <col v-for="column in presetColumns" :key="column.id" :style="presetColumnStyle(column.id)" />
+        </colgroup>
         <thead>
           <tr>
-            <th class="preset-col-enabled">启用</th>
-            <th class="preset-col-name">名称</th>
-            <th>发送内容</th>
-            <th class="preset-col-format">格式</th>
-            <th class="preset-col-delay">延时</th>
-            <th class="preset-col-actions">操作</th>
+            <th v-for="column in presetColumns" :key="column.id" :class="column.className">
+              {{ column.label }}
+              <span
+                class="preset-column-resizer"
+                role="separator"
+                :aria-label="`调整${column.label}列宽`"
+                aria-orientation="vertical"
+                :aria-valuenow="columnWidths[column.id]"
+                :aria-valuemin="PRESET_COLUMN_LIMITS[column.id].minimum"
+                :aria-valuemax="PRESET_COLUMN_LIMITS[column.id].maximum"
+                tabindex="0"
+                title="拖动调整列宽，双击恢复默认"
+                @pointerdown.stop.prevent="beginColumnResize(column.id, $event)"
+                @keydown="handleColumnResizeKey(column.id, $event)"
+                @dblclick.stop="resetColumnWidth(column.id)"
+              ></span>
+            </th>
           </tr>
         </thead>
         <tbody>
